@@ -1,0 +1,238 @@
+const router = require("express").Router();
+const db     = require('./index');
+const { authenticate, optionalAuth, requireAdmin } = require('./authmiddleware');
+
+// ── Public / read-only ────────────────────────────────────────────────────────
+
+// GET /api/content/subjects
+router.get("/subjects", optionalAuth, async (req, res, next) => {
+  try {
+    const { levelType } = req.query;
+    const subjects = levelType
+      ? await db.many("SELECT * FROM subjects WHERE level_type=$1 ORDER BY name", [levelType])
+      : await db.many("SELECT * FROM subjects ORDER BY name");
+    res.json(subjects);
+  } catch (err) { next(err); }
+});
+
+// GET /api/content/subjects/:id/topics
+router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
+  try {
+    const topics = await db.many(
+      `SELECT t.*,
+         COALESCE(json_agg(
+           json_build_object('id',s.id,'name',s.name,'slug',s.slug,'order_index',s.order_index)
+           ORDER BY s.order_index
+         ) FILTER (WHERE s.id IS NOT NULL), '[]') AS subtopics
+       FROM topics t
+       LEFT JOIN subtopics s ON s.topic_id=t.id
+       WHERE t.subject_id=$1
+       GROUP BY t.id ORDER BY t.order_index`,
+      [req.params.id]
+    );
+    res.json(topics);
+  } catch (err) { next(err); }
+});
+
+// GET /api/content/subtopics/:id/lessons
+router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
+  try {
+    const lessons = await db.many(
+      `SELECT id, title, summary, keywords, created_at FROM lessons
+       WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
+      [req.params.id]
+    );
+    res.json(lessons);
+  } catch (err) { next(err); }
+});
+
+// GET /api/content/lessons/:id
+router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
+  try {
+    const lesson = await db.one(
+      `SELECT l.*, st.name AS subtopic_name, t.name AS topic_name, s.name AS subject_name,
+              t.id AS topic_id, s.id AS subject_id
+       FROM lessons l
+       JOIN subtopics st ON st.id=l.subtopic_id
+       JOIN topics t ON t.id=st.topic_id
+       JOIN subjects s ON s.id=t.subject_id
+       WHERE l.id=$1 AND l.is_published=true`,
+      [req.params.id]
+    );
+    if (!lesson) return res.status(404).json({ error: "Lesson not found" });
+
+    const modelAnswers = await db.many("SELECT * FROM model_answers WHERE lesson_id=$1", [req.params.id]);
+
+    if (req.user) {
+      await db.query(
+        `INSERT INTO memory_strength (user_id, subtopic_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [req.user.id, lesson.subtopic_id]
+      );
+      const { awardXP } = require('./gamification');
+      await awardXP(req.user.id, 15, "lesson_read", lesson.id);
+    }
+
+    res.json({ ...lesson, modelAnswers });
+  } catch (err) { next(err); }
+});
+
+// GET /api/content/subtopics/:id/mindmap
+router.get("/subtopics/:id/mindmap", authenticate, async (req, res, next) => {
+  try {
+    const subtopic = await db.one("SELECT * FROM subtopics WHERE id=$1", [req.params.id]);
+    if (!subtopic) return res.status(404).json({ error: "Subtopic not found" });
+    const lessons = await db.many(
+      "SELECT id, title, keywords, summary FROM lessons WHERE subtopic_id=$1 AND is_published=true",
+      [req.params.id]
+    );
+    res.json({
+      id: subtopic.id,
+      label: subtopic.name,
+      children: lessons.map(l => ({
+        id: l.id, label: l.title,
+        children: (l.keywords || []).map((kw, i) => ({ id: `${l.id}-kw-${i}`, label: kw, type: "keyword" })),
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// ── Admin write routes ─────────────────────────────────────────────────────────
+
+// POST /api/content/subjects
+router.post("/subjects", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { name, slug, icon, color, levelType, description } = req.body;
+    if (!name || !slug) return res.status(400).json({ error: "name and slug required" });
+    const row = await db.one(
+      `INSERT INTO subjects (name, slug, icon, color, level_type, description, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [name, slug, icon || null, color || null, levelType || null, description || null, req.user.id]
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+// POST /api/content/topics
+router.post("/topics", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { subjectId, name, slug, orderIndex } = req.body;
+    const row = await db.one(
+      `INSERT INTO topics (subject_id, name, slug, order_index, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [subjectId, name, slug, orderIndex || 0, req.user.id]
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+// POST /api/content/subtopics
+router.post("/subtopics", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { topicId, name, slug, orderIndex } = req.body;
+    const row = await db.one(
+      `INSERT INTO subtopics (topic_id, name, slug, order_index, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [topicId, name, slug, orderIndex || 0, req.user.id]
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+// POST /api/content/lessons
+router.post("/lessons", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { subtopicId, title, content, summary, keywords, isPublished } = req.body;
+    const row = await db.one(
+      `INSERT INTO lessons (subtopic_id, title, content, summary, keywords, is_published, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING *`,
+      [subtopicId, title, content, summary || null, keywords || [], isPublished ?? false, req.user.id]
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+// PUT /api/content/lessons/:id
+router.put("/lessons/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const current = await db.one("SELECT * FROM lessons WHERE id=$1", [req.params.id]);
+    if (!current) return res.status(404).json({ error: "Lesson not found" });
+
+    // Save version before overwriting
+    await db.query(
+      "INSERT INTO lesson_versions (lesson_id, content, version, edited_by) VALUES ($1,$2,$3,$4)",
+      [req.params.id, current.content, current.version, req.user.id]
+    );
+
+    const { title, content, summary, keywords, isPublished } = req.body;
+    const row = await db.one(
+      `UPDATE lessons SET
+         title       = COALESCE($1, title),
+         content     = COALESCE($2, content),
+         summary     = COALESCE($3, summary),
+         keywords    = COALESCE($4, keywords),
+         is_published= COALESCE($5, is_published),
+         version     = version + 1,
+         updated_by  = $6,
+         updated_at  = NOW()
+       WHERE id=$7 RETURNING *`,
+      [title, content, summary, keywords, isPublished, req.user.id, req.params.id]
+    );
+    res.json(row);
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/content/lessons/:id
+router.delete("/lessons/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM lessons WHERE id=$1", [req.params.id]);
+    res.json({ message: "Lesson deleted" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/content/subtopics/:id
+router.delete("/subtopics/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM subtopics WHERE id=$1", [req.params.id]);
+    res.json({ message: "Subtopic deleted" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/content/topics/:id
+router.delete("/topics/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM topics WHERE id=$1", [req.params.id]);
+    res.json({ message: "Topic deleted" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/content/subjects/:id
+router.delete("/subjects/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM subjects WHERE id=$1", [req.params.id]);
+    res.json({ message: "Subject deleted" });
+  } catch (err) { next(err); }
+});
+
+// POST /api/content/model-answers
+router.post("/model-answers", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { lessonId, title, content, grade, marks, annotations } = req.body;
+    const row = await db.one(
+      `INSERT INTO model_answers (lesson_id, title, content, grade, marks, annotations, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [lessonId, title, content, grade || null, marks || null, annotations || null, req.user.id]
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+// GET /api/content/lessons/:id/versions  (admin only)
+router.get("/lessons/:id/versions", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const versions = await db.many(
+      "SELECT * FROM lesson_versions WHERE lesson_id=$1 ORDER BY version DESC",
+      [req.params.id]
+    );
+    res.json(versions);
+  } catch (err) { next(err); }
+});
+
+module.exports = router;
