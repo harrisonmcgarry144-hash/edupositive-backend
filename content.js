@@ -234,5 +234,52 @@ router.get("/lessons/:id/versions", authenticate, requireAdmin, async (req, res,
     res.json(versions);
   } catch (err) { next(err); }
 });
+// POST /api/content/lessons/:id/complete
+router.post("/lessons/:id/complete", authenticate, async (req, res, next) => {
+  try {
+    await db.query(
+      `INSERT INTO lesson_completions (user_id, lesson_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [req.user.id, req.params.id]
+    );
+    res.json({ message: "Lesson marked complete" });
+  } catch (err) { next(err); }
+});
 
+// GET /api/content/my-progress
+router.get("/my-progress", authenticate, async (req, res, next) => {
+  try {
+    const rows = await db.many(
+      `SELECT s.id AS subject_id, t.id AS topic_id, st.id AS subtopic_id,
+              COUNT(l.id) AS total_lessons,
+              COUNT(lc.id) AS completed_lessons
+       FROM subjects s
+       JOIN user_subjects us ON us.subject_id=s.id AND us.user_id=$1
+       JOIN topics t ON t.subject_id=s.id
+       JOIN subtopics st ON st.topic_id=t.id
+       LEFT JOIN lessons l ON l.subtopic_id=st.id AND l.is_published=true
+       LEFT JOIN lesson_completions lc ON lc.lesson_id=l.id AND lc.user_id=$1
+       GROUP BY s.id, t.id, st.id`,
+      [req.user.id]
+    );
+    const progress = {};
+    for (const r of rows) {
+      if (!progress[r.subject_id]) progress[r.subject_id] = { topics: {}, subtopics: {} };
+      if (!progress[r.subject_id].topics[r.topic_id]) progress[r.subject_id].topics[r.topic_id] = { total: 0, completed: 0 };
+      progress[r.subject_id].topics[r.topic_id].total += parseInt(r.total_lessons);
+      progress[r.subject_id].topics[r.topic_id].completed += parseInt(r.completed_lessons);
+      const stPct = r.total_lessons > 0 ? Math.round(r.completed_lessons / r.total_lessons * 100) : 0;
+      progress[r.subject_id].subtopics[r.subtopic_id] = stPct;
+    }
+    for (const sid of Object.keys(progress)) {
+      const topics = progress[sid].topics;
+      const topicPcts = Object.values(topics).map(t => t.total > 0 ? Math.round(t.completed/t.total*100) : 0);
+      progress[sid].subjectPct = topicPcts.length ? Math.round(topicPcts.reduce((a,b)=>a+b,0)/topicPcts.length) : 0;
+      for (const tid of Object.keys(topics)) {
+        const t = topics[tid];
+        progress[sid].topics[tid] = t.total > 0 ? Math.round(t.completed/t.total*100) : 0;
+      }
+    }
+    res.json(progress);
+  } catch (err) { next(err); }
+});
 module.exports = router;
