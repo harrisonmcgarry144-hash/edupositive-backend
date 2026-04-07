@@ -35,10 +35,12 @@ function parseJSON(text) {
 
 // POST /api/ai/chat
 router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
+ // POST /api/ai/chat
+router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
   try {
     const { message, sessionId, mode = "normal", personality = "friendly", topicId } = req.body;
     if (!message?.trim()) return res.status(400).json({ error: "message required" });
-
+ 
     // Load or create session
     let session = sessionId
       ? await db.one("SELECT * FROM chat_sessions WHERE id=$1 AND user_id=$2", [sessionId, req.user.id])
@@ -49,12 +51,12 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
         [req.user.id, topicId || null, mode, personality]
       );
     }
-
+ 
     const history = await db.many(
       "SELECT role, content FROM chat_messages WHERE session_id=$1 ORDER BY created_at DESC LIMIT 20",
       [session.id]
     );
-
+ 
     // Get user's subjects
     const userSubjects = await db.many(
       `SELECT s.name FROM subjects s
@@ -63,7 +65,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
       [req.user.id]
     );
     const subjectNames = userSubjects.map(s => s.name).join(", ");
-
+ 
     // Search for relevant lesson content based on the message
     let lessonContext = "";
     try {
@@ -85,7 +87,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
          LIMIT 3`,
         [req.user.id, `%${message.slice(0, 50)}%`]
       );
-
+ 
       if (relevantLessons.length > 0) {
         lessonContext = "\n\nRELEVANT LESSON CONTENT FROM THE CURRICULUM:\n" +
           relevantLessons.map(l =>
@@ -93,7 +95,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
           ).join("\n\n---\n\n");
       }
     } catch(e) { /* ignore lesson fetch errors */ }
-
+ 
     // Topic context if provided
     let topicCtx = "";
     if (topicId) {
@@ -103,13 +105,13 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
       ).catch(() => null);
       if (topic) topicCtx = `\nCurrent topic: ${topic.name} (${topic.subject})`;
     }
-
+ 
     const system = `You are EduPositive's AI tutor — a specialist A-Level revision assistant.
-
+ 
 STUDENT'S SUBJECTS: ${subjectNames || "Not set"}
 ${PERSONALITIES[personality] || PERSONALITIES.friendly}
 ${MODES[mode] || MODES.normal}${topicCtx}
-
+ 
 IMPORTANT RULES:
 - Only answer questions related to the student's A-Level subjects: ${subjectNames || "their subjects"}
 - If asked about something outside their subjects, politely redirect them to their own subjects
@@ -117,21 +119,22 @@ IMPORTANT RULES:
 - Use UK A-Level terminology and refer to the relevant exam board specifications
 - If lesson content is provided, prioritise it as the source of truth
 - Keep responses concise and well-structured${lessonContext}`;
-
+ 
     const reply = await callClaude(system, [
       ...history.reverse().map(m => ({ role: m.role, content: m.content })),
       { role: "user", content: message },
     ]);
-
+ 
     await db.query("INSERT INTO chat_messages (session_id, role, content) VALUES ($1,'user',$2)", [session.id, message]);
     await db.query("INSERT INTO chat_messages (session_id, role, content) VALUES ($1,'assistant',$2)", [session.id, reply]);
     await awardXP(req.user.id, 5, "ai_chat");
-
+ 
     res.json({ reply, sessionId: session.id });
   } catch (err) { next(err); }
 });
+});
 
-// GET /api/ai/sessions
+// GET /api/ai/sessions  — list chat sessions
 router.get("/sessions", authenticate, async (req, res, next) => {
   try {
     const sessions = await db.many(
@@ -241,6 +244,7 @@ Respond ONLY with valid JSON:
       [req.user.id, subtopicId, userText, JSON.stringify(result), result.score || 0]
     );
 
+    // Update memory strength
     await upsertMemoryStrength(req.user.id, subtopicId, "blurt_score", result.score || 0);
     await awardXP(req.user.id, 30, "blurt_session", session.id);
 
@@ -349,7 +353,7 @@ router.get("/study-guidance", authenticate, async (req, res, next) => {
       ),
     ]);
 
-    const prompt = `You are an academic strategist for a UK A-Level student.
+    const prompt = `You are an academic strategist for a UK GCSE/A-Level student.
 
 Weak memory areas: ${JSON.stringify(weak.filter(w=>w.score<50))}
 Recent exam scores: ${JSON.stringify(exams)}
