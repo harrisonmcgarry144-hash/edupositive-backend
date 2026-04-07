@@ -1,8 +1,7 @@
 const router = require("express").Router();
 const db     = require('./index');
 const { authenticate, optionalAuth, requireAdmin } = require('./authmiddleware');
-
-// ── Public / read-only ────────────────────────────────────────────────────────
+const { checkAndAutoComplete } = require('./auto_lessons');
 
 // GET /api/content/subjects
 router.get("/subjects", optionalAuth, async (req, res, next) => {
@@ -33,6 +32,7 @@ router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
     res.json(topics);
   } catch (err) { next(err); }
 });
+
 // GET /api/content/topics/:id/subtopics
 router.get("/topics/:id/subtopics", optionalAuth, async (req, res, next) => {
   try {
@@ -70,9 +70,7 @@ router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
       [req.params.id]
     );
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-
     const modelAnswers = await db.many("SELECT * FROM model_answers WHERE lesson_id=$1", [req.params.id]);
-
     if (req.user) {
       await db.query(
         `INSERT INTO memory_strength (user_id, subtopic_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -81,7 +79,6 @@ router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
       const { awardXP } = require('./gamification');
       await awardXP(req.user.id, 15, "lesson_read", lesson.id);
     }
-
     res.json({ ...lesson, modelAnswers });
   } catch (err) { next(err); }
 });
@@ -105,8 +102,6 @@ router.get("/subtopics/:id/mindmap", authenticate, async (req, res, next) => {
     });
   } catch (err) { next(err); }
 });
-
-// ── Admin write routes ─────────────────────────────────────────────────────────
 
 // POST /api/content/subjects
 router.post("/subjects", authenticate, requireAdmin, async (req, res, next) => {
@@ -156,6 +151,13 @@ router.post("/lessons", authenticate, requireAdmin, async (req, res, next) => {
       [subtopicId, title, content, summary || null, keywords || [], isPublished ?? false, req.user.id]
     );
     res.status(201).json(row);
+
+    // Background: auto-complete lessons after 3 are uploaded
+    if (isPublished !== false) {
+      db.one("SELECT t.subject_id FROM subtopics st JOIN topics t ON t.id=st.topic_id WHERE st.id=$1", [subtopicId])
+        .then(r => r && checkAndAutoComplete(r.subject_id, req.user.id))
+        .catch(e => console.error("[AutoLesson]", e.message));
+    }
   } catch (err) { next(err); }
 });
 
@@ -164,13 +166,10 @@ router.put("/lessons/:id", authenticate, requireAdmin, async (req, res, next) =>
   try {
     const current = await db.one("SELECT * FROM lessons WHERE id=$1", [req.params.id]);
     if (!current) return res.status(404).json({ error: "Lesson not found" });
-
-    // Save version before overwriting
     await db.query(
       "INSERT INTO lesson_versions (lesson_id, content, version, edited_by) VALUES ($1,$2,$3,$4)",
       [req.params.id, current.content, current.version, req.user.id]
     );
-
     const { title, content, summary, keywords, isPublished } = req.body;
     const row = await db.one(
       `UPDATE lessons SET
@@ -234,7 +233,7 @@ router.post("/model-answers", authenticate, requireAdmin, async (req, res, next)
   } catch (err) { next(err); }
 });
 
-// GET /api/content/lessons/:id/versions  (admin only)
+// GET /api/content/lessons/:id/versions
 router.get("/lessons/:id/versions", authenticate, requireAdmin, async (req, res, next) => {
   try {
     const versions = await db.many(
@@ -244,6 +243,7 @@ router.get("/lessons/:id/versions", authenticate, requireAdmin, async (req, res,
     res.json(versions);
   } catch (err) { next(err); }
 });
+
 // POST /api/content/lessons/:id/complete
 router.post("/lessons/:id/complete", authenticate, async (req, res, next) => {
   try {
@@ -292,4 +292,5 @@ router.get("/my-progress", authenticate, async (req, res, next) => {
     res.json(progress);
   } catch (err) { next(err); }
 });
+
 module.exports = router;
