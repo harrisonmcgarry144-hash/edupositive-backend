@@ -252,5 +252,12 @@ router.put("/compete/:id/respond", authenticate, async (req, res, next) => {
     res.json(comp);
   } catch (err) { next(err); }
 });
-
+// GET /api/flashcards/daily
+router.get("/daily", authenticate, async (req, res, next) => {
+  try {
+    const { getDailyFlashcards } = require('./daily_flashcards');
+    const daily = await getDailyFlashcards(req.user.id);
+    res.json(daily);
+  } catch (err) { next(err); }
+});
 module.exports = router;
