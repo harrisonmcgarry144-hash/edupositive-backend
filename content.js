@@ -33,6 +33,16 @@ router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
     res.json(topics);
   } catch (err) { next(err); }
 });
+// GET /api/content/topics/:id/subtopics
+router.get("/topics/:id/subtopics", optionalAuth, async (req, res, next) => {
+  try {
+    const subtopics = await db.many(
+      "SELECT * FROM subtopics WHERE topic_id=$1 ORDER BY order_index",
+      [req.params.id]
+    );
+    res.json(subtopics);
+  } catch (err) { next(err); }
+});
 
 // GET /api/content/subtopics/:id/lessons
 router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
