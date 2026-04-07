@@ -38,7 +38,19 @@ router.put("/me", authenticate, async (req, res, next) => {
     res.json(user);
   } catch (err) { next(err); }
 });
-
+// GET /api/users/me/subjects
+router.get("/me/subjects", authenticate, async (req, res, next) => {
+  try {
+    const subjects = await db.many(
+      `SELECT s.* FROM subjects s
+       INNER JOIN user_subjects us ON us.subject_id = s.id
+       WHERE us.user_id = $1
+       ORDER BY s.name`,
+      [req.user.id]
+    );
+    res.json(subjects);
+  } catch (e) { next(e); }
+});
 // PUT /api/users/me/subjects
 router.put("/me/subjects", authenticate, async (req, res, next) => {
   try {
