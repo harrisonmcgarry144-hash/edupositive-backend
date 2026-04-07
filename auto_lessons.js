@@ -10,84 +10,40 @@ async function callClaude(system, messages, maxTokens = 4000) {
   return res.content[0].text;
 }
 
-// Called when a new lesson is saved — checks if we should auto-complete the subject
-async function checkAndAutoComplete(subjectId, adminId) {
-  try {
-    // Count published lessons in this subject
-    const countRow = await db.one(
-      `SELECT COUNT(l.id)::int AS count
-       FROM lessons l
-       JOIN subtopics st ON st.id=l.subtopic_id
-       JOIN topics t ON t.id=st.topic_id
-       WHERE t.subject_id=$1 AND l.is_published=true`,
-      [subjectId]
-    );
+function parseJSON(text) {
+  try { return JSON.parse(text.replace(/```json|```/g, "").trim()); }
+  catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) try { return JSON.parse(match[0]); } catch {}
+    return null;
+  }
+}
 
-    if (countRow.count < 3) return; // Not enough lessons yet
-    if (countRow.count > 3) return; // Already auto-completed before
+// Write a single lesson for a subtopic based on style examples
+async function writeLessonForSubtopic(subtopic, subject, styleExamples, adminId) {
+  const styleGuide = styleExamples.slice(0, 6).map((e, i) =>
+    `EXAMPLE ${i+1} (${e.subject} — ${e.subtopic}):\nTitle: ${e.title}\n${e.content.slice(0, 800)}`
+  ).join("\n\n---\n\n");
 
-    console.log(`[AutoLesson] Triggering auto-complete for subject ${subjectId}`);
-
-    // Get the 3 existing lessons as style examples
-    const examples = await db.many(
-      `SELECT l.title, l.content, l.summary, st.name AS subtopic, t.name AS topic
-       FROM lessons l
-       JOIN subtopics st ON st.id=l.subtopic_id
-       JOIN topics t ON t.id=st.topic_id
-       WHERE t.subject_id=$1 AND l.is_published=true
-       ORDER BY l.created_at
-       LIMIT 3`,
-      [subjectId]
-    );
-
-    const subject = await db.one("SELECT name FROM subjects WHERE id=$1", [subjectId]);
-
-    // Get all subtopics that have NO lessons yet
-    const emptySubtopics = await db.many(
-      `SELECT st.id, st.name, t.name AS topic
-       FROM subtopics st
-       JOIN topics t ON t.id=st.topic_id
-       WHERE t.subject_id=$1
-       AND st.id NOT IN (
-         SELECT DISTINCT subtopic_id FROM lessons WHERE is_published=true
-       )`,
-      [subjectId]
-    );
-
-    if (!emptySubtopics.length) return;
-
-    console.log(`[AutoLesson] Writing ${emptySubtopics.length} lessons for ${subject.name}`);
-
-    // Build style guide from examples
-    const styleGuide = examples.map((e, i) =>
-      `EXAMPLE ${i+1} - ${e.subtopic} (${e.topic}):\nTitle: ${e.title}\nContent:\n${e.content}`
-    ).join("\n\n========\n\n");
-
-    // Process in batches of 5 to avoid timeout
-    for (let i = 0; i < emptySubtopics.length; i += 5) {
-      const batch = emptySubtopics.slice(i, i + 5);
-
-      for (const subtopic of batch) {
-        try {
-          const prompt = `You are writing an A-Level revision lesson for ${subject.name}.
+  const prompt = `You are writing an A-Level revision lesson for ${subject.name}.
 
 SUBTOPIC: ${subtopic.name}
 TOPIC: ${subtopic.topic}
+SUBJECT: ${subject.name}
 
-Study these 3 example lessons carefully and match their exact style, depth, and structure:
+Study these example lessons carefully and match their exact style, depth and structure:
 
 ${styleGuide}
 
-Now write a lesson for "${subtopic.name}" following the EXACT same style as the examples above.
+Write a complete lesson for "${subtopic.name}" following the EXACT same style as the examples.
 
 Rules:
-- Match the tone, depth and paragraph structure of the examples exactly
-- No em dashes (never use --)
-- No bullet point lists unless the examples use them
-- No headers like "Introduction:" or "Conclusion:" unless examples use them
-- No AI-sounding phrases like "It is important to note that" or "Furthermore" or "In conclusion"
-- Write naturally as an expert teacher would
-- Include key terms, equations or diagrams described in text where relevant
+- Match the tone, depth and paragraph structure exactly
+- Never use em dashes (--)
+- No generic AI phrases like "It is important to note", "Furthermore", "In conclusion"
+- No bullet point lists unless examples use them
+- Write as a knowledgeable teacher would naturally write
+- Include relevant key terms, equations or concepts
 - Length should match the examples
 
 Return ONLY valid JSON:
@@ -97,95 +53,223 @@ Return ONLY valid JSON:
   "content": "<full lesson content>"
 }`;
 
-          const text = await callClaude(
-            "You are an expert A-Level teacher writing revision notes. Match the style of the examples exactly.",
-            [{ role: "user", content: prompt }],
-            3000
-          );
+  const text = await callClaude(
+    "You are an expert A-Level teacher. Match the style of the examples exactly. Never use em dashes.",
+    [{ role: "user", content: prompt }],
+    3000
+  );
 
-          let parsed;
-          try {
-            parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-          } catch(e) {
-            // Try to extract JSON from the response
-            const match = text.match(/\{[\s\S]*\}/);
-            if (match) parsed = JSON.parse(match[0]);
-            else continue;
-          }
+  return parseJSON(text);
+}
 
-          if (!parsed?.title || !parsed?.content) continue;
+// Auto-complete a single subject using given style examples
+async function autoCompleteSubject(subjectId, adminId, styleExamples) {
+  // Get empty subtopics (no lessons yet)
+  const emptySubtopics = await db.many(
+    `SELECT st.id, st.name, t.name AS topic
+     FROM subtopics st
+     JOIN topics t ON t.id=st.topic_id
+     WHERE t.subject_id=$1
+     AND st.id NOT IN (
+       SELECT DISTINCT subtopic_id FROM lessons WHERE is_published=true
+     )`,
+    [subjectId]
+  );
 
-          await db.query(
-            `INSERT INTO lessons (subtopic_id, title, summary, content, is_published, created_by, updated_by)
-             VALUES ($1,$2,$3,$4,true,$5,$5)`,
-            [subtopic.id, parsed.title, parsed.summary || "", parsed.content, adminId]
-          );
+  if (!emptySubtopics.length) {
+    console.log(`[AutoLesson] No empty subtopics in subject ${subjectId}`);
+    return 0;
+  }
 
-          // Auto-generate flashcards for this lesson
-          await autoGenerateFlashcards(subtopic.id, parsed.content, adminId);
+  const subject = await db.one("SELECT name FROM subjects WHERE id=$1", [subjectId]);
+  console.log(`[AutoLesson] Writing ${emptySubtopics.length} lessons for ${subject.name}`);
 
-          console.log(`[AutoLesson] Written: ${parsed.title}`);
+  let written = 0;
+  for (const subtopic of emptySubtopics) {
+    try {
+      const lesson = await writeLessonForSubtopic(subtopic, subject, styleExamples, adminId);
+      if (!lesson?.title || !lesson?.content) continue;
 
-          // Small delay to avoid rate limits
-          await new Promise(r => setTimeout(r, 1000));
+      const row = await db.one(
+        `INSERT INTO lessons (subtopic_id, title, summary, content, is_published, created_by, updated_by)
+         VALUES ($1,$2,$3,$4,true,$5,$5) RETURNING id`,
+        [subtopic.id, lesson.title, lesson.summary || "", lesson.content, adminId]
+      );
 
-        } catch(e) {
-          console.error(`[AutoLesson] Failed for ${subtopic.name}:`, e.message);
-        }
+      // Auto-generate flashcards and questions in background
+      try {
+        const { autoGenerateFlashcards } = require('./auto_lessons');
+        await autoGenerateFlashcards(subtopic.id, lesson.content, adminId);
+      } catch(e) {}
+
+      try {
+        const { generateLessonQuestions } = require('./auto_questions');
+        generateLessonQuestions(row.id).catch(() => {});
+      } catch(e) {}
+
+      written++;
+      console.log(`[AutoLesson] Written: ${lesson.title}`);
+      await new Promise(r => setTimeout(r, 1500)); // Rate limit delay
+    } catch(e) {
+      console.error(`[AutoLesson] Failed for ${subtopic.name}:`, e.message);
+    }
+  }
+
+  // Mark this subject as auto-completed
+  await db.query(
+    "INSERT INTO auto_complete_log (subject_id, lessons_written, completed_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    [subjectId, written, adminId]
+  );
+
+  return written;
+}
+
+// Main trigger — called after every lesson upload
+async function checkAndAutoComplete(subjectId, adminId) {
+  try {
+    // Check if this subject was already auto-completed
+    const alreadyDone = await db.one(
+      "SELECT id FROM auto_complete_log WHERE subject_id=$1",
+      [subjectId]
+    ).catch(() => null);
+    if (alreadyDone) return;
+
+    // Count lessons in this subject
+    const countRow = await db.one(
+      `SELECT COUNT(l.id)::int AS count
+       FROM lessons l
+       JOIN subtopics st ON st.id=l.subtopic_id
+       JOIN topics t ON t.id=st.topic_id
+       WHERE t.subject_id=$1 AND l.is_published=true`,
+      [subjectId]
+    );
+
+    // Phase 1: When a subject hits 3 lessons, auto-complete just that subject
+    if (countRow.count === 3) {
+      console.log(`[AutoLesson] Subject ${subjectId} hit 3 lessons — auto-completing...`);
+
+      // Get style examples from THIS subject only
+      const examples = await db.many(
+        `SELECT l.title, l.content, l.summary, st.name AS subtopic, t.name AS topic, s.name AS subject
+         FROM lessons l
+         JOIN subtopics st ON st.id=l.subtopic_id
+         JOIN topics t ON t.id=st.topic_id
+         JOIN subjects s ON s.id=t.subject_id
+         WHERE t.subject_id=$1 AND l.is_published=true
+         ORDER BY l.created_at LIMIT 3`,
+        [subjectId]
+      );
+
+      await autoCompleteSubject(subjectId, adminId, examples);
+
+      // Phase 2: Check if 7 subjects are now fully auto-completed
+      const completedCount = await db.one(
+        "SELECT COUNT(*)::int AS count FROM auto_complete_log",
+        []
+      );
+
+      if (completedCount.count >= 7) {
+        console.log(`[AutoLesson] 7 subjects complete! Starting full platform auto-fill...`);
+        await triggerFullPlatformFill(adminId);
       }
     }
-
-    console.log(`[AutoLesson] Complete for ${subject.name}`);
 
   } catch(e) {
     console.error("[AutoLesson] Error:", e.message);
   }
 }
 
-// Auto-generate flashcards for a subtopic based on lesson content
+// Phase 2: After 7 subjects done, fill ALL remaining subjects
+async function triggerFullPlatformFill(adminId) {
+  try {
+    // Check if full fill already happened
+    const alreadyFilled = await db.one(
+      "SELECT id FROM auto_complete_log WHERE subject_id='full_platform'",
+      []
+    ).catch(() => null);
+    if (alreadyFilled) return;
+
+    // Mark it as started to prevent double-running
+    await db.query(
+      "INSERT INTO auto_complete_log (subject_id, lessons_written, completed_by) VALUES ('full_platform',0,$1)",
+      [adminId]
+    );
+
+    // Get all completed subjects and their lessons as style examples
+    const completedSubjectIds = await db.many(
+      "SELECT subject_id FROM auto_complete_log WHERE subject_id != 'full_platform'",
+      []
+    );
+    const ids = completedSubjectIds.map(r => r.subject_id);
+
+    // Get up to 15 example lessons spread across all 7 subjects
+    const styleExamples = await db.many(
+      `SELECT l.title, l.content, l.summary, st.name AS subtopic, t.name AS topic, s.name AS subject
+       FROM lessons l
+       JOIN subtopics st ON st.id=l.subtopic_id
+       JOIN topics t ON t.id=st.topic_id
+       JOIN subjects s ON s.id=t.subject_id
+       WHERE t.subject_id = ANY($1) AND l.is_published=true
+       ORDER BY l.created_at
+       LIMIT 15`,
+      [ids]
+    );
+
+    console.log(`[AutoLesson] Full platform fill: ${styleExamples.length} style examples loaded`);
+
+    // Find all subjects that haven't been auto-completed yet
+    const remainingSubjects = await db.many(
+      `SELECT id, name FROM subjects
+       WHERE id NOT IN (
+         SELECT subject_id::uuid FROM auto_complete_log
+         WHERE subject_id != 'full_platform'
+       )`,
+      []
+    );
+
+    console.log(`[AutoLesson] ${remainingSubjects.length} subjects to fill`);
+
+    for (const subject of remainingSubjects) {
+      console.log(`[AutoLesson] Auto-filling: ${subject.name}`);
+      await autoCompleteSubject(subject.id, adminId, styleExamples);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    console.log("[AutoLesson] Full platform fill complete!");
+
+  } catch(e) {
+    console.error("[AutoLesson] Full platform fill error:", e.message);
+  }
+}
+
+// Auto-generate flashcards for a subtopic
 async function autoGenerateFlashcards(subtopicId, lessonContent, adminId) {
   try {
-    // Check if flashcards already exist for this subtopic
     const existing = await db.one(
-      `SELECT COUNT(f.id)::int AS count
-       FROM flashcards f
-       JOIN flashcard_decks fd ON fd.id=f.deck_id
-       WHERE fd.subtopic_id=$1`,
+      `SELECT COUNT(f.id)::int AS count FROM flashcards f
+       JOIN flashcard_decks fd ON fd.id=f.deck_id WHERE fd.subtopic_id=$1`,
       [subtopicId]
-    );
+    ).catch(() => ({ count: 0 }));
     if (existing.count > 0) return;
 
     const subtopic = await db.one(
       `SELECT st.name, t.name AS topic, s.name AS subject
-       FROM subtopics st
-       JOIN topics t ON t.id=st.topic_id
-       JOIN subjects s ON s.id=t.subject_id
+       FROM subtopics st JOIN topics t ON t.id=st.topic_id JOIN subjects s ON s.id=t.subject_id
        WHERE st.id=$1`,
       [subtopicId]
     );
 
-    const prompt = `Create 8 high-quality A-Level exam flashcards for this topic.
+    const prompt = `Create 8 A-Level exam flashcards for this topic.
 
-SUBJECT: ${subtopic.subject}
-TOPIC: ${subtopic.topic}
-SUBTOPIC: ${subtopic.name}
-LESSON CONTENT: ${lessonContent.slice(0, 3000)}
-
-Rules:
-- Questions should be exam-style (define, explain, state, calculate, evaluate)
-- Answers should be concise but complete enough for exam marks
-- Include key terms, processes, and concepts
-- No filler questions
+SUBJECT: ${subtopic.subject} — ${subtopic.topic} — ${subtopic.name}
+CONTENT: ${lessonContent.slice(0, 2500)}
 
 Return ONLY a JSON array:
-[
-  { "question": "...", "answer": "...", "hint": "..." }
-]`;
+[{ "question": "...", "answer": "...", "hint": "..." }]`;
 
     const text = await callClaude(
-      "You are an A-Level examiner creating revision flashcards.",
-      [{ role: "user", content: prompt }],
-      2000
+      "You are an A-Level examiner creating concise revision flashcards.",
+      [{ role: "user", content: prompt }], 2000
     );
 
     let cards;
@@ -199,21 +283,16 @@ Return ONLY a JSON array:
 
     if (!Array.isArray(cards) || !cards.length) return;
 
-    // Create a deck for this subtopic
+    const subjectIdRow = await db.one(
+      "SELECT subject_id FROM topics t JOIN subtopics st ON st.topic_id=t.id WHERE st.id=$1",
+      [subtopicId]
+    );
+
     const deck = await db.one(
-      `INSERT INTO flashcard_decks (user_id, title, subject_id, subtopic_id, is_auto_generated)
-       VALUES ($1,$2,(SELECT subject_id FROM topics t JOIN subtopics st ON st.topic_id=t.id WHERE st.id=$3),$3,true)
-       RETURNING id`,
-      [adminId, `${subtopic.name} — ${subtopic.subject}`, subtopicId]
-    ).catch(async () => {
-      // Try without subtopic_id if column doesn't exist
-      return db.one(
-        `INSERT INTO flashcard_decks (user_id, title, subject_id)
-         VALUES ($1,$2,(SELECT subject_id FROM topics t JOIN subtopics st ON st.topic_id=t.id WHERE st.id=$3))
-         RETURNING id`,
-        [adminId, `${subtopic.name} — ${subtopic.subject}`, subtopicId]
-      );
-    });
+      `INSERT INTO flashcard_decks (user_id, title, subject_id)
+       VALUES ($1,$2,$3) RETURNING id`,
+      [adminId, `${subtopic.name} — ${subtopic.subject}`, subjectIdRow.subject_id]
+    );
 
     for (const card of cards) {
       if (!card.question || !card.answer) continue;
@@ -223,11 +302,10 @@ Return ONLY a JSON array:
       );
     }
 
-    console.log(`[AutoFlashcard] Generated ${cards.length} cards for ${subtopic.name}`);
-
+    console.log(`[AutoFlashcard] ${cards.length} cards for ${subtopic.name}`);
   } catch(e) {
     console.error("[AutoFlashcard] Error:", e.message);
   }
 }
 
-module.exports = { checkAndAutoComplete, autoGenerateFlashcards };
+module.exports = { checkAndAutoComplete, autoGenerateFlashcards, triggerFullPlatformFill };
