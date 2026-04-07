@@ -2,6 +2,7 @@ const router = require("express").Router();
 const db     = require('./index');
 const { authenticate, optionalAuth, requireAdmin } = require('./authmiddleware');
 const { checkAndAutoComplete } = require('./auto_lessons');
+const { generateLessonQuestions } = require('./auto_questions');
 
 // GET /api/content/subjects
 router.get("/subjects", optionalAuth, async (req, res, next) => {
@@ -71,6 +72,10 @@ router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
     );
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
     const modelAnswers = await db.many("SELECT * FROM model_answers WHERE lesson_id=$1", [req.params.id]);
+    const questions = await db.many(
+      "SELECT * FROM lesson_questions WHERE lesson_id=$1 ORDER BY CASE grade WHEN 'C' THEN 1 WHEN 'B' THEN 2 WHEN 'A' THEN 3 WHEN 'A*' THEN 4 END",
+      [req.params.id]
+    ).catch(() => []);
     if (req.user) {
       await db.query(
         `INSERT INTO memory_strength (user_id, subtopic_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -79,7 +84,7 @@ router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
       const { awardXP } = require('./gamification');
       await awardXP(req.user.id, 15, "lesson_read", lesson.id);
     }
-    res.json({ ...lesson, modelAnswers });
+    res.json({ ...lesson, modelAnswers, questions });
   } catch (err) { next(err); }
 });
 
@@ -93,8 +98,7 @@ router.get("/subtopics/:id/mindmap", authenticate, async (req, res, next) => {
       [req.params.id]
     );
     res.json({
-      id: subtopic.id,
-      label: subtopic.name,
+      id: subtopic.id, label: subtopic.name,
       children: lessons.map(l => ({
         id: l.id, label: l.title,
         children: (l.keywords || []).map((kw, i) => ({ id: `${l.id}-kw-${i}`, label: kw, type: "keyword" })),
@@ -152,8 +156,11 @@ router.post("/lessons", authenticate, requireAdmin, async (req, res, next) => {
     );
     res.status(201).json(row);
 
-    // Background: auto-complete lessons after 3 are uploaded
     if (isPublished !== false) {
+      // Background: auto-generate exam questions
+      generateLessonQuestions(row.id).catch(e => console.error("[AutoQ]", e.message));
+
+      // Background: auto-complete lessons after 3 are uploaded
       db.one("SELECT t.subject_id FROM subtopics st JOIN topics t ON t.id=st.topic_id WHERE st.id=$1", [subtopicId])
         .then(r => r && checkAndAutoComplete(r.subject_id, req.user.id))
         .catch(e => console.error("[AutoLesson]", e.message));
@@ -172,19 +179,20 @@ router.put("/lessons/:id", authenticate, requireAdmin, async (req, res, next) =>
     );
     const { title, content, summary, keywords, isPublished } = req.body;
     const row = await db.one(
-      `UPDATE lessons SET
-         title       = COALESCE($1, title),
-         content     = COALESCE($2, content),
-         summary     = COALESCE($3, summary),
-         keywords    = COALESCE($4, keywords),
-         is_published= COALESCE($5, is_published),
-         version     = version + 1,
-         updated_by  = $6,
-         updated_at  = NOW()
-       WHERE id=$7 RETURNING *`,
+      `UPDATE lessons SET title=COALESCE($1,title), content=COALESCE($2,content),
+         summary=COALESCE($3,summary), keywords=COALESCE($4,keywords),
+         is_published=COALESCE($5,is_published), version=version+1,
+         updated_by=$6, updated_at=NOW() WHERE id=$7 RETURNING *`,
       [title, content, summary, keywords, isPublished, req.user.id, req.params.id]
     );
     res.json(row);
+
+    // Regenerate questions if content changed
+    if (content) {
+      db.query("DELETE FROM lesson_questions WHERE lesson_id=$1", [req.params.id])
+        .then(() => generateLessonQuestions(req.params.id))
+        .catch(e => console.error("[AutoQ]", e.message));
+    }
   } catch (err) { next(err); }
 });
 
