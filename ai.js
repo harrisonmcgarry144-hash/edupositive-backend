@@ -55,19 +55,68 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
       [session.id]
     );
 
+    // Get user's subjects
+    const userSubjects = await db.many(
+      `SELECT s.name FROM subjects s
+       JOIN user_subjects us ON us.subject_id=s.id
+       WHERE us.user_id=$1`,
+      [req.user.id]
+    );
+    const subjectNames = userSubjects.map(s => s.name).join(", ");
+
+    // Search for relevant lesson content based on the message
+    let lessonContext = "";
+    try {
+      const relevantLessons = await db.many(
+        `SELECT l.title, l.content, l.summary, st.name AS subtopic, t.name AS topic, s.name AS subject
+         FROM lessons l
+         JOIN subtopics st ON st.id=l.subtopic_id
+         JOIN topics t ON t.id=st.topic_id
+         JOIN subjects s ON s.id=t.subject_id
+         JOIN user_subjects us ON us.subject_id=s.id AND us.user_id=$1
+         WHERE l.is_published=true
+         AND (
+           l.title ILIKE $2 OR
+           l.content ILIKE $2 OR
+           l.summary ILIKE $2 OR
+           st.name ILIKE $2 OR
+           t.name ILIKE $2
+         )
+         LIMIT 3`,
+        [req.user.id, `%${message.slice(0, 50)}%`]
+      );
+
+      if (relevantLessons.length > 0) {
+        lessonContext = "\n\nRELEVANT LESSON CONTENT FROM THE CURRICULUM:\n" +
+          relevantLessons.map(l =>
+            `[${l.subject} > ${l.topic} > ${l.subtopic}]\nTitle: ${l.title}\n${l.summary || l.content.slice(0, 600)}`
+          ).join("\n\n---\n\n");
+      }
+    } catch(e) { /* ignore lesson fetch errors */ }
+
+    // Topic context if provided
     let topicCtx = "";
     if (topicId) {
       const topic = await db.one(
         "SELECT t.name, s.name AS subject FROM topics t JOIN subjects s ON s.id=t.subject_id WHERE t.id=$1",
         [topicId]
-      );
+      ).catch(() => null);
       if (topic) topicCtx = `\nCurrent topic: ${topic.name} (${topic.subject})`;
     }
 
-    const system = `You are EduPositive's AI tutor for UK GCSE/A-Level students.
+    const system = `You are EduPositive's AI tutor — a specialist A-Level revision assistant.
+
+STUDENT'S SUBJECTS: ${subjectNames || "Not set"}
 ${PERSONALITIES[personality] || PERSONALITIES.friendly}
 ${MODES[mode] || MODES.normal}${topicCtx}
-Keep responses concise and well-structured. Never write full essays unless asked.`;
+
+IMPORTANT RULES:
+- Only answer questions related to the student's A-Level subjects: ${subjectNames || "their subjects"}
+- If asked about something outside their subjects, politely redirect them to their own subjects
+- Base your answers on the lesson content provided below when available
+- Use UK A-Level terminology and refer to the relevant exam board specifications
+- If lesson content is provided, prioritise it as the source of truth
+- Keep responses concise and well-structured${lessonContext}`;
 
     const reply = await callClaude(system, [
       ...history.reverse().map(m => ({ role: m.role, content: m.content })),
@@ -82,7 +131,7 @@ Keep responses concise and well-structured. Never write full essays unless asked
   } catch (err) { next(err); }
 });
 
-// GET /api/ai/sessions  — list chat sessions
+// GET /api/ai/sessions
 router.get("/sessions", authenticate, async (req, res, next) => {
   try {
     const sessions = await db.many(
@@ -192,7 +241,6 @@ Respond ONLY with valid JSON:
       [req.user.id, subtopicId, userText, JSON.stringify(result), result.score || 0]
     );
 
-    // Update memory strength
     await upsertMemoryStrength(req.user.id, subtopicId, "blurt_score", result.score || 0);
     await awardXP(req.user.id, 30, "blurt_session", session.id);
 
@@ -301,7 +349,7 @@ router.get("/study-guidance", authenticate, async (req, res, next) => {
       ),
     ]);
 
-    const prompt = `You are an academic strategist for a UK GCSE/A-Level student.
+    const prompt = `You are an academic strategist for a UK A-Level student.
 
 Weak memory areas: ${JSON.stringify(weak.filter(w=>w.score<50))}
 Recent exam scores: ${JSON.stringify(exams)}
