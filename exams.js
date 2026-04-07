@@ -210,5 +210,11 @@ router.post("/papers/:id/grade-boundaries", authenticate, requireAdmin, async (r
     res.json({ message: "Grade boundaries saved" });
   } catch (err) { next(err); }
 });
-
+// DELETE /api/exams/papers/:id
+router.delete("/papers/:id", authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    await db.query("DELETE FROM past_papers WHERE id=$1", [req.params.id]);
+    res.json({ message: "Paper deleted" });
+  } catch (err) { next(err); }
+});
 module.exports = router;
