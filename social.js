@@ -6,17 +6,16 @@ const { authenticate } = require('./authmiddleware');
 
 router.get("/users/search", authenticate, async (req, res, next) => {
   try {
-    const { q, school } = req.query;
-    const p = [req.user.id];
-    let query = `SELECT id, username, full_name, avatar_url, xp, level, streak, school
-                 FROM users WHERE id!=$1 AND is_public=true`;
-    if (q)      query += ` AND (username ILIKE $${p.push(`%${q}%`)} OR full_name ILIKE $${p.length})`;
-    if (school) query += ` AND school ILIKE $${p.push(`%${school}%`)}`;
-    query += " LIMIT 20";
-    res.json(await db.many(query, p));
+    const { q } = req.query;
+    if (!q?.trim()) return res.json([]);
+    const users = await db.many(
+      `SELECT id, username, full_name, avatar_url, school, level, xp, streak
+       FROM users WHERE LOWER(username) = LOWER($1) AND id != $2 LIMIT 5`,
+      [q.trim(), req.user.id]
+    );
+    res.json(users);
   } catch (err) { next(err); }
 });
-
 // ── Friendships ───────────────────────────────────────────────────────────────
 
 router.post("/friends/request", authenticate, async (req, res, next) => {
