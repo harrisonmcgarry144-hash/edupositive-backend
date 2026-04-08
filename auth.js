@@ -36,7 +36,7 @@ router.post("/login", limiter, async (req, res, next) => {
   try {
     const { email: rawEmail, password } = req.body;
     if (!rawEmail || !password) return res.status(400).json({ error: "Email and password required" });
-    const user = await db.one("SELECT * FROM users WHERE email=$1", [rawEmail.toLowerCase()]);
+    const user = await db.one("SELECT * FROM users WHERE username=$1 OR email=$1", [rawEmail.toLowerCase()]);
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
