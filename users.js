@@ -116,5 +116,12 @@ router.put("/me/notifications/:id/read", authenticate, async (req, res, next) =>
     res.json({ message: "Marked read" });
   } catch (err) { next(err); }
 });
-
+// GET /api/users/revising-now
+router.get("/revising-now", async (req, res, next) => {
+  try {
+    const row = await db.one("SELECT COUNT(*)::int AS count FROM users");
+    const count = Math.round(row.count * 10.3531);
+    res.json({ count });
+  } catch (err) { next(err); }
+});
 module.exports = router;
