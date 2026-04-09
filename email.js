@@ -110,8 +110,26 @@ async function sendExamCountdownEmail(toEmail, username, examName, daysUntil) {
     html,
   });
 }
-
+async function sendVerificationCode(toEmail, username, code) {
+  const html = layout(`
+    ${h1("Verify your email")}
+    ${p(`Hey ${username}! Welcome to EduPositive. Enter this code to verify your account:`)}
+    <div style="text-align:center;margin:28px 0;">
+      <div style="display:inline-block;background:#1a1a2e;border:2px solid #6c63ff;border-radius:16px;padding:20px 40px;">
+        <div style="font-size:48px;font-weight:900;color:#6c63ff;letter-spacing:12px;font-family:monospace;">${code}</div>
+      </div>
+    </div>
+    ${p("This code expires in 15 minutes.")}
+  `);
+  await transporter.sendMail({
+    from: FROM,
+    to: toEmail,
+    subject: `${code} is your EduPositive verification code`,
+    html,
+  });
+}
 module.exports = {
+  sendVerificationCode,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendStreakReminderEmail,
