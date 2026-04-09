@@ -31,6 +31,7 @@ app.use("/api/exams",        require("./exams"));
 app.use("/api/analytics",    require("./analytics"));
 app.use("/api/gamification", require("./gamification"));
 app.use("/api/social",       require("./social"));
+app.use('/api/classes', require('./classes'));
 app.use("/api/tutors",       require("./tutors"));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
