@@ -128,11 +128,34 @@ async function sendVerificationCode(toEmail, username, code) {
     html,
   });
 }
+
+async function sendDailyRevisionEmail(toEmail, username, msg, streak) {
+  const streakText = streak > 1
+    ? `<div style="text-align:center;margin-bottom:20px;"><span style="background:#1a1a2e;border:1px solid #f59e0b;border-radius:100px;padding:6px 16px;font-size:13px;color:#f59e0b;font-weight:700;">${streak} day streak 🔥 Keep it going!</span></div>`
+    : "";
+
+  const html = layout(`
+    ${h1(msg.subject)}
+    ${streakText}
+    ${p(msg.tip)}
+    ${btn("Start Revising →", BASE)}
+    ${note("You're receiving this because you have an EduPositive account.")}
+  `);
+
+  await transporter.sendMail({
+    from: FROM,
+    to: toEmail,
+    subject: msg.subject,
+    html,
+  });
+}
 module.exports = {
+  sendDailyRevisionEmail,
   sendVerificationCode,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendStreakReminderEmail,
   sendWeakAreaEmail,
   sendExamCountdownEmail,
+};
 };

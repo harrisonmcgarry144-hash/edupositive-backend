@@ -5,7 +5,8 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
-const cron = require("node-cron");
+const cron = require('node-cron');
+const { sendDailyRevisionEmails } = require('./daily_email');
 
 const app = express();
 const httpServer = createServer(app);
@@ -52,7 +53,10 @@ app.use((err, req, res, _next) => {
     error: err.message || "Internal server error",
   });
 });
-
+// Daily revision email at 4pm GMT
+cron.schedule('0 16 * * *', () => {
+  sendDailyRevisionEmails();
+}, { timezone: "Europe/London" });
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
   console.log(`✦ EduPositive API running on port ${PORT}`);
