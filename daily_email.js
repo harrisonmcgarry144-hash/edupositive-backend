@@ -28,7 +28,6 @@ async function sendDailyRevisionEmails() {
       `SELECT id, email, username, full_name, streak, xp, level
        FROM users
        WHERE is_verified = true
-       AND email_notifications IS NOT false
        ORDER BY created_at`,
       []
     );
