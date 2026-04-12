@@ -2,7 +2,7 @@ const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const BASE = process.env.CLIENT_URL || "http://localhost:3000";
-const FROM = "EduPositive <onboarding@resend.dev>";
+const FROM = "EduPositive <noreply@edupositive.xyz>";
 
 const layout = (body) => `
 <!DOCTYPE html>
