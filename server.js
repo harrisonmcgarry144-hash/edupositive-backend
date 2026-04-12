@@ -9,6 +9,7 @@ const cron = require('node-cron');
 const { sendDailyRevisionEmails } = require('./daily_email');
 
 const app = express();
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
