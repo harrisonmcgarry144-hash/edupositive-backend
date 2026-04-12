@@ -75,7 +75,6 @@ router.post("/verify-code", authenticate, async (req, res, next) => {
       [req.user.id]
     );
 
-    await awardXP(req.user.id, 100, "account_verified");
     res.json({ message: "Email verified!", verified: true });
   } catch (err) { next(err); }
 });
