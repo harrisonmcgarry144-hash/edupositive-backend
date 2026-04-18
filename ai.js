@@ -3,8 +3,6 @@ const Groq      = require("groq-sdk");
 const rateLimit = require("express-rate-limit");
 const db        = require('./index');
 const { authenticate } = require('./authmiddleware');
-const gamification = require('./gamification');
-const awardXP = gamification.awardXP;
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const aiLimit = rateLimit({ windowMs: 60_000, max: 30, message: { error: "AI rate limit — wait a moment" } });
@@ -131,7 +129,7 @@ IMPORTANT RULES:
 
     await db.query("INSERT INTO chat_messages (session_id, role, content) VALUES ($1,'user',$2)", [session.id, message]);
     await db.query("INSERT INTO chat_messages (session_id, role, content) VALUES ($1,'assistant',$2)", [session.id, reply]);
-    await awardXP(req.user.id, 5, "ai_chat");
+    await require('./gamification').awardXP(req.user.id, 5, "ai_chat");
 
     res.json({ reply, sessionId: session.id });
   } catch (err) { next(err); }
@@ -201,7 +199,7 @@ Respond ONLY with valid JSON:
         [result.marksAwarded, JSON.stringify(result), attemptId, questionId]
       );
     }
-    await awardXP(req.user.id, 20, "exam_answer_marked", questionId);
+    await require('./gamification').awardXP(req.user.id, 20, "exam_answer_marked", questionId);
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -248,7 +246,7 @@ Respond ONLY with valid JSON:
     );
 
     await upsertMemoryStrength(req.user.id, subtopicId, "blurt_score", result.score || 0);
-    await awardXP(req.user.id, 30, "blurt_session", session.id);
+    await require('./gamification').awardXP(req.user.id, 30, "blurt_session", session.id);
 
     res.json({ ...result, sessionId: session.id });
   } catch (err) { next(err); }
@@ -296,7 +294,7 @@ Respond ONLY with valid JSON:
     );
 
     await upsertMemoryStrength(req.user.id, subtopicId, "recall_score", result.overallScore || 0);
-    await awardXP(req.user.id, 40, "feynman_session");
+    await require('./gamification').awardXP(req.user.id, 40, "feynman_session");
     res.json(result);
   } catch (err) { next(err); }
 });
