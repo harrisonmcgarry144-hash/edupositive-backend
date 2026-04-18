@@ -9,6 +9,7 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const cron = require('node-cron');
 const { sendDailyRevisionEmails } = require('./daily_email');
+const generateRouter = require('./generate_routes');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -36,6 +37,7 @@ app.use("/api/analytics",    require("./analytics"));
 app.use("/api/gamification", require("./gamification"));
 app.use("/api/social",       require("./social"));
 app.use('/api/classes', require('./classes'));
+app.use('/api/generate', require('./generate_routes'));
 app.use("/api/tutors",       require("./tutors"));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
