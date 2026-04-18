@@ -3,22 +3,25 @@ const db     = require('./index');
 const { authenticate } = require('./authmiddleware');
 const { awardXP, seedAchievements } = require('./gamification');
 
-// GET /api/gamification/leaderboard — friends only
+// GET /api/gamification/leaderboard
 router.get("/leaderboard", authenticate, async (req, res, next) => {
   try {
-    const users = await db.many(
+    const { scope = "global" } = req.query;
+    let q, p;
+const users = await db.many(
       `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url,
               (u.id = $1) AS "isMe"
        FROM users u
        WHERE u.id = $1
        OR u.id IN (
-         SELECT CASE WHEN requester_id=$1 THEN addressee_id ELSE requester_id END
-         FROM friendships WHERE (requester_id=$1 OR addressee_id=$1) AND status='accepted'
+         SELECT CASE WHEN requester=$1 THEN addressee ELSE requester END
+FROM friendships WHERE (requester=$1 OR addressee=$1) AND status='accepted'
        )
        ORDER BY u.xp DESC LIMIT 20`,
       [req.user.id]
     );
-    res.json(users.map((u, i) => ({ ...u, rank: i + 1 })));
+    res.json(users);
+    res.json(users.map((u, i) => ({ ...u, rank: i+1, isMe: u.id === req.user.id })));
   } catch (err) { next(err); }
 });
 
@@ -80,15 +83,6 @@ router.get("/stats", authenticate, async (req, res, next) => {
       ),
     ]);
     res.json({ xpToday: xpToday.xp, pomosThisWeek: pomosThisWeek.count, totalPomos: totalPomos.count });
-  } catch (err) { next(err); }
-});
-
-// GET /api/users/revising-now
-router.get("/revising-now", async (req, res, next) => {
-  try {
-    const row = await db.one("SELECT COUNT(*)::int AS count FROM users");
-    const count = Math.round(row.count * 10.3531);
-    res.json({ count });
   } catch (err) { next(err); }
 });
 
