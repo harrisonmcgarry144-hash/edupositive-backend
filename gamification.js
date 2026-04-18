@@ -86,4 +86,6 @@ router.get("/stats", authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+module.exports = { awardXP, seedAchievements };
+
 module.exports = router;
