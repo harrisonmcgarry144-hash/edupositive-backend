@@ -3,7 +3,8 @@ const Groq      = require("groq-sdk");
 const rateLimit = require("express-rate-limit");
 const db        = require('./index');
 const { authenticate } = require('./authmiddleware');
-const { awardXP }     = require('./gamification');
+const gamification = require('./gamification');
+const awardXP = gamification.awardXP;
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const aiLimit = rateLimit({ windowMs: 60_000, max: 30, message: { error: "AI rate limit — wait a moment" } });
