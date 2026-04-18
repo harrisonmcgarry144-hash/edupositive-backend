@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const { router: ranksRouter, updateRanks } = require('./ranks');
+const { router: paymentsRouter } = require('./payments');
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -38,6 +39,8 @@ app.use('/api/classes', require('./classes'));
 app.use("/api/tutors",       require("./tutors"));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
+app.use('/api/payments/webhook', require('./payments').router);
+app.use('/api/payments', paymentsRouter);
 app.use('/api/ranks', ranksRouter);
 
 app.get("/api/health", (_, res) => res.json({ status: "ok", app: "EduPositive", version: "1.0.0" }));
