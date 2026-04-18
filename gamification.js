@@ -1,27 +1,50 @@
 const router = require("express").Router();
 const db     = require('./index');
 const { authenticate } = require('./authmiddleware');
-const { awardXP, seedAchievements } = require('./gamification');
 
-// GET /api/gamification/leaderboard
+// awardXP function defined here to avoid circular dependency
+async function awardXP(userId, amount, reason, refId) {
+  try {
+    await db.query(
+      "INSERT INTO xp_events (user_id, amount, reason, ref_id) VALUES ($1,$2,$3,$4)",
+      [userId, amount, reason, refId || null]
+    );
+    const user = await db.one(
+      "UPDATE users SET xp=xp+$1 WHERE id=$2 RETURNING xp, level",
+      [amount, userId]
+    );
+    // Level up check: every 500 XP = new level
+    const newLevel = Math.floor(user.xp / 500) + 1;
+    if (newLevel > user.level) {
+      await db.query("UPDATE users SET level=$1 WHERE id=$2", [newLevel, userId]);
+    }
+    return { xp: user.xp, level: newLevel };
+  } catch(e) {
+    console.error("awardXP error:", e.message);
+    return { xp: 0, level: 1 };
+  }
+}
+
+async function seedAchievements() {
+  // no-op for now
+}
+
+// GET /api/gamification/leaderboard — friends only
 router.get("/leaderboard", authenticate, async (req, res, next) => {
   try {
-    const { scope = "global" } = req.query;
-    let q, p;
-const users = await db.many(
+    const users = await db.many(
       `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url,
               (u.id = $1) AS "isMe"
        FROM users u
        WHERE u.id = $1
        OR u.id IN (
          SELECT CASE WHEN requester=$1 THEN receiver ELSE requester END
-FROM friendships WHERE (requester=$1 OR receiver=$1) AND status='accepted'
+         FROM friendships WHERE (requester=$1 OR receiver=$1) AND status='accepted'
        )
        ORDER BY u.xp DESC LIMIT 20`,
       [req.user.id]
     );
-    res.json(users);
-    res.json(users.map((u, i) => ({ ...u, rank: i+1, isMe: u.id === req.user.id })));
+    res.json(users.map((u, i) => ({ ...u, rank: i + 1 })));
   } catch (err) { next(err); }
 });
 
@@ -69,23 +92,21 @@ router.post("/pomodoro/:id/complete", authenticate, async (req, res, next) => {
 router.get("/stats", authenticate, async (req, res, next) => {
   try {
     const [xpToday, pomosThisWeek, totalPomos] = await Promise.all([
-      db.one(
-        "SELECT COALESCE(SUM(amount),0)::int AS xp FROM xp_events WHERE user_id=$1 AND DATE(created_at)=CURRENT_DATE",
-        [req.user.id]
-      ),
-      db.one(
-        "SELECT COUNT(*)::int AS count FROM pomodoro_sessions WHERE user_id=$1 AND completed=true AND started_at > NOW()-INTERVAL '7 days'",
-        [req.user.id]
-      ),
-      db.one(
-        "SELECT COUNT(*)::int AS count FROM pomodoro_sessions WHERE user_id=$1 AND completed=true",
-        [req.user.id]
-      ),
+      db.one("SELECT COALESCE(SUM(amount),0)::int AS xp FROM xp_events WHERE user_id=$1 AND DATE(created_at)=CURRENT_DATE", [req.user.id]),
+      db.one("SELECT COUNT(*)::int AS count FROM pomodoro_sessions WHERE user_id=$1 AND completed=true AND started_at > NOW()-INTERVAL '7 days'", [req.user.id]),
+      db.one("SELECT COUNT(*)::int AS count FROM pomodoro_sessions WHERE user_id=$1 AND completed=true", [req.user.id]),
     ]);
     res.json({ xpToday: xpToday.xp, pomosThisWeek: pomosThisWeek.count, totalPomos: totalPomos.count });
   } catch (err) { next(err); }
 });
 
-module.exports = { awardXP, seedAchievements };
+// GET /api/users/revising-now
+router.get("/revising-now", async (req, res, next) => {
+  try {
+    const row = await db.one("SELECT COUNT(*)::int AS count FROM users");
+    const count = Math.round(row.count * 10.3531);
+    res.json({ count });
+  } catch (err) { next(err); }
+});
 
-module.exports = router;
+module.exports = { router, awardXP, seedAchievements };
