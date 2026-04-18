@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const { router: ranksRouter, updateRanks } = require('./ranks');
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -37,6 +38,7 @@ app.use('/api/classes', require('./classes'));
 app.use("/api/tutors",       require("./tutors"));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
+app.use('/api/ranks', ranksRouter);
 
 app.get("/api/health", (_, res) => res.json({ status: "ok", app: "EduPositive", version: "1.0.0" }));
 
@@ -47,6 +49,9 @@ cron.schedule("0 18 * * *", async () => {
     console.error("Cron streak reminder failed:", e.message);
   }
 });
+
+// Update ranks daily at midnight
+cron.schedule('0 0 * * *', () => updateRanks(), { timezone: "Europe/London" });
 
 app.use((err, req, res, _next) => {
   console.error(err);
