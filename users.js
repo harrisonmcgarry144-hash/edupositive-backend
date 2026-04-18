@@ -4,40 +4,15 @@ const { authenticate } = require('./authmiddleware');
 
 const PUBLIC_FIELDS = `id, username, full_name, avatar_url, bio, school, xp, level, streak, is_public, created_at`;
 
-// GET /api/users/:id
-router.get("/:id", authenticate, async (req, res, next) => {
+// GET /api/users/revising-now — must be before /:id
+router.get("/revising-now", async (req, res, next) => {
   try {
-    const user = await db.one(`SELECT ${PUBLIC_FIELDS} FROM users WHERE id=$1`, [req.params.id]);
-    if (!user) return res.status(404).json({ error: "User not found" });
-    if (!user.is_public && user.id !== req.user.id && req.user.role !== "admin")
-      return res.status(403).json({ error: "This profile is private" });
-    res.json(user);
+    const row = await db.one("SELECT COUNT(*)::int AS count FROM users");
+    const count = Math.round(row.count * 10.3531);
+    res.json({ count });
   } catch (err) { next(err); }
 });
 
-// PUT /api/users/me — update own profile
-router.put("/me", authenticate, async (req, res, next) => {
-  try {
-    const { fullName, bio, school, isPublic, levelType, careerGoal, pomodoroMins, pomodoroOn } = req.body;
-    const user = await db.one(
-      `UPDATE users SET
-        full_name   = COALESCE($1, full_name),
-        bio         = COALESCE($2, bio),
-        school      = COALESCE($3, school),
-        is_public   = COALESCE($4, is_public),
-        level_type  = COALESCE($5, level_type),
-        career_goal = COALESCE($6, career_goal),
-        pomodoro_mins = COALESCE($7, pomodoro_mins),
-        pomodoro_on   = COALESCE($8, pomodoro_on),
-        updated_at  = NOW()
-       WHERE id=$9
-       RETURNING id, email, username, full_name, bio, avatar_url, school, is_public,
-                 level_type, career_goal, pomodoro_mins, pomodoro_on`,
-      [fullName, bio, school, isPublic, levelType, careerGoal, pomodoroMins, pomodoroOn, req.user.id]
-    );
-    res.json(user);
-  } catch (err) { next(err); }
-});
 // GET /api/users/me/subjects
 router.get("/me/subjects", authenticate, async (req, res, next) => {
   try {
@@ -51,6 +26,7 @@ router.get("/me/subjects", authenticate, async (req, res, next) => {
     res.json(subjects);
   } catch (e) { next(e); }
 });
+
 // PUT /api/users/me/subjects
 router.put("/me/subjects", authenticate, async (req, res, next) => {
   try {
@@ -66,7 +42,7 @@ router.put("/me/subjects", authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/users/me/schedule — today's study schedule
+// GET /api/users/me/schedule
 router.get("/me/schedule", authenticate, async (req, res, next) => {
   try {
     const today = new Date().toISOString().slice(0,10);
@@ -116,12 +92,40 @@ router.put("/me/notifications/:id/read", authenticate, async (req, res, next) =>
     res.json({ message: "Marked read" });
   } catch (err) { next(err); }
 });
-// GET /api/users/revising-now
-router.get("/revising-now", async (req, res, next) => {
+
+// PUT /api/users/me — update own profile
+router.put("/me", authenticate, async (req, res, next) => {
   try {
-    const row = await db.one("SELECT COUNT(*)::int AS count FROM users");
-    const count = Math.round(row.count * 10.3531);
-    res.json({ count });
+    const { fullName, bio, school, isPublic, levelType, careerGoal, pomodoroMins, pomodoroOn } = req.body;
+    const user = await db.one(
+      `UPDATE users SET
+        full_name     = COALESCE($1, full_name),
+        bio           = COALESCE($2, bio),
+        school        = COALESCE($3, school),
+        is_public     = COALESCE($4, is_public),
+        level_type    = COALESCE($5, level_type),
+        career_goal   = COALESCE($6, career_goal),
+        pomodoro_mins = COALESCE($7, pomodoro_mins),
+        pomodoro_on   = COALESCE($8, pomodoro_on),
+        updated_at    = NOW()
+       WHERE id=$9
+       RETURNING id, email, username, full_name, bio, avatar_url, school, is_public,
+                 level_type, career_goal, pomodoro_mins, pomodoro_on`,
+      [fullName, bio, school, isPublic, levelType, careerGoal, pomodoroMins, pomodoroOn, req.user.id]
+    );
+    res.json(user);
   } catch (err) { next(err); }
 });
+
+// GET /api/users/:id — must be last
+router.get("/:id", authenticate, async (req, res, next) => {
+  try {
+    const user = await db.one(`SELECT ${PUBLIC_FIELDS} FROM users WHERE id=$1`, [req.params.id]);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user.is_public && user.id !== req.user.id && req.user.role !== "admin")
+      return res.status(403).json({ error: "This profile is private" });
+    res.json(user);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
