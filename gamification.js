@@ -14,8 +14,8 @@ const users = await db.many(
        FROM users u
        WHERE u.id = $1
        OR u.id IN (
-         SELECT CASE WHEN requester=$1 THEN addressee ELSE requester END
-FROM friendships WHERE (requester=$1 OR addressee=$1) AND status='accepted'
+         SELECT CASE WHEN requester=$1 THEN receiver ELSE requester END
+FROM friendships WHERE (requester=$1 OR receiver=$1) AND status='accepted'
        )
        ORDER BY u.xp DESC LIMIT 20`,
       [req.user.id]
