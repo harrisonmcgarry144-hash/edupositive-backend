@@ -42,6 +42,7 @@ app.use("/api/tutors",       require("./tutors"));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
 app.use('/api/admin', require('./admin_regenerate'));
+app.use('/api/admin', require('./admin_dashboard'));
 app.use('/api/payments/webhook', require('./payments').router);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/ranks', ranksRouter);
