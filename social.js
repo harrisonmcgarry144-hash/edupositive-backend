@@ -9,13 +9,14 @@ router.get("/users/search", authenticate, async (req, res, next) => {
     const { q } = req.query;
     if (!q?.trim()) return res.json([]);
     const users = await db.many(
-      `SELECT id, username, full_name, avatar_url, school, level, xp, streak
+      `SELECT id, username, full_name, avatar_url, school, level, xp, streak, rank, is_top100
        FROM users WHERE LOWER(username) = LOWER($1) AND id != $2 LIMIT 5`,
       [q.trim(), req.user.id]
     );
     res.json(users);
   } catch (err) { next(err); }
 });
+
 // ── Friendships ───────────────────────────────────────────────────────────────
 
 router.post("/friends/request", authenticate, async (req, res, next) => {
@@ -36,7 +37,7 @@ router.post("/friends/request", authenticate, async (req, res, next) => {
 
 router.put("/friends/:id/respond", authenticate, async (req, res, next) => {
   try {
-    const { status } = req.body; // accepted | blocked
+    const { status } = req.body;
     const f = await db.one(
       "UPDATE friendships SET status=$1 WHERE id=$2 AND receiver=$3 RETURNING *",
       [status, req.params.id, req.user.id]
@@ -49,6 +50,7 @@ router.get("/friends", authenticate, async (req, res, next) => {
   try {
     const friends = await db.many(
       `SELECT u.id, u.username, u.full_name, u.avatar_url, u.xp, u.level, u.streak,
+              u.rank, u.is_top100,
               f.id AS friendship_id, f.status, f.created_at
        FROM friendships f
        JOIN users u ON u.id=CASE WHEN f.requester=$1 THEN f.receiver ELSE f.requester END
@@ -62,7 +64,8 @@ router.get("/friends", authenticate, async (req, res, next) => {
 router.get("/friends/pending", authenticate, async (req, res, next) => {
   try {
     const pending = await db.many(
-      `SELECT u.id, u.username, u.avatar_url, f.id AS friendship_id, f.created_at
+      `SELECT u.id, u.username, u.avatar_url, u.rank, u.is_top100,
+              f.id AS friendship_id, f.created_at
        FROM friendships f JOIN users u ON u.id=f.requester
        WHERE f.receiver=$1 AND f.status='pending'`,
       [req.user.id]
@@ -75,14 +78,16 @@ router.get("/friends/pending", authenticate, async (req, res, next) => {
 
 router.get("/messages", authenticate, async (req, res, next) => {
   try {
-    // Conversations list
     const convos = await db.many(
       `SELECT DISTINCT ON (partner_id)
-         partner_id, partner_name, partner_avatar, content AS last_message, created_at, read
+         partner_id, partner_name, partner_avatar, partner_rank, partner_top100,
+         content AS last_message, created_at, read
        FROM (
          SELECT CASE WHEN sender_id=$1 THEN receiver_id ELSE sender_id END AS partner_id,
                 CASE WHEN sender_id=$1 THEN r.username ELSE s.username END AS partner_name,
                 CASE WHEN sender_id=$1 THEN r.avatar_url ELSE s.avatar_url END AS partner_avatar,
+                CASE WHEN sender_id=$1 THEN r.rank ELSE s.rank END AS partner_rank,
+                CASE WHEN sender_id=$1 THEN r.is_top100 ELSE s.is_top100 END AS partner_top100,
                 content, dm.created_at, dm.read
          FROM direct_messages dm
          JOIN users s ON s.id=dm.sender_id
@@ -187,7 +192,7 @@ router.get("/forum", authenticate, async (req, res, next) => {
   try {
     const { topicId } = req.query;
     let q = `
-      SELECT fp.*, u.username, u.avatar_url,
+      SELECT fp.*, u.username, u.avatar_url, u.rank, u.is_top100,
              COUNT(replies.id)::int AS reply_count
       FROM forum_posts fp
       JOIN users u ON u.id=fp.user_id
@@ -195,7 +200,7 @@ router.get("/forum", authenticate, async (req, res, next) => {
       WHERE fp.parent_id IS NULL AND fp.is_flagged=false`;
     const p = [];
     if (topicId) q += ` AND fp.topic_id=$${p.push(topicId)}`;
-    q += " GROUP BY fp.id, u.username, u.avatar_url ORDER BY fp.created_at DESC LIMIT 50";
+    q += " GROUP BY fp.id, u.username, u.avatar_url, u.rank, u.is_top100 ORDER BY fp.created_at DESC LIMIT 50";
     res.json(await db.many(q, p));
   } catch (err) { next(err); }
 });
@@ -203,7 +208,7 @@ router.get("/forum", authenticate, async (req, res, next) => {
 router.get("/forum/:id/replies", authenticate, async (req, res, next) => {
   try {
     const replies = await db.many(
-      `SELECT fp.*, u.username, u.avatar_url FROM forum_posts fp
+      `SELECT fp.*, u.username, u.avatar_url, u.rank, u.is_top100 FROM forum_posts fp
        JOIN users u ON u.id=fp.user_id
        WHERE fp.parent_id=$1 AND fp.is_flagged=false ORDER BY fp.created_at`,
       [req.params.id]

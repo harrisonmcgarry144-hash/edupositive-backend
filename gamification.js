@@ -33,7 +33,7 @@ async function seedAchievements() {
 router.get("/leaderboard", authenticate, async (req, res, next) => {
   try {
     const users = await db.many(
-      `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url,
+      `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url, u.rank, u.is_top100,
               (u.id = $1) AS "isMe"
        FROM users u
        WHERE u.id = $1
