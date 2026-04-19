@@ -36,6 +36,8 @@ app.use("/api/exams",        require("./exams"));
 app.use("/api/analytics",    require("./analytics"));
 app.use('/api/gamification', require('./gamification').router);
 app.use("/api/social",       require("./social"));
+app.use('/api/admin', require('./tax_tracker'));
+app.use('/api/analytics', require('./advanced_analytics'));
 app.use('/api/classes', require('./classes'));
 app.use('/api/generate', require('./generate_routes'));
 app.use("/api/tutors",       require("./tutors"));

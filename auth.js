@@ -169,9 +169,9 @@ router.post("/reset-password", limiter, async (req, res, next) => {
 // POST /api/auth/onboarding
 router.post("/onboarding", authenticate, async (req, res, next) => {
   try {
-    const { levelType, subjectIds, careerGoal } = req.body;
-    await db.query("UPDATE users SET level_type=$1, career_goal=$2 WHERE id=$3",
-      [levelType || null, careerGoal || null, req.user.id]);
+    const { levelType, subjectIds, careerGoal, subject_customisations } = req.body;
+    await db.query("UPDATE users SET level_type=$1, career_goal=$2, subject_customisations=$3 WHERE id=$4",
+      [levelType || null, careerGoal || null, subject_customisations || null, req.user.id]);
     if (subjectIds?.length) {
       await db.query("DELETE FROM user_subjects WHERE user_id=$1", [req.user.id]);
       for (const sid of subjectIds) {
