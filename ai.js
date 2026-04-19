@@ -385,4 +385,34 @@ async function upsertMemoryStrength(userId, subtopicId, field, value) {
   );
 }
 
+// POST /api/ai/mindmap-grade
+router.post("/mindmap-grade", authenticate, aiLimit, async (req, res, next) => {
+  try {
+    const { subtopicId, mindmap } = req.body;
+    if (!subtopicId || !mindmap?.trim()) return res.status(400).json({ error: "subtopicId and mindmap required" });
+
+    const lessons = await db.many(
+      "SELECT title, content FROM lessons WHERE subtopic_id=$1 AND is_published=true",
+      [subtopicId]
+    );
+    if (!lessons.length) return res.status(404).json({ error: "No content for this subtopic" });
+
+    const sub = await db.one(
+      `SELECT st.name, t.name AS topic, s.name AS subject
+       FROM subtopics st JOIN topics t ON t.id=st.topic_id JOIN subjects s ON s.id=t.subject_id
+       WHERE st.id=$1`,
+      [subtopicId]
+    ).catch(() => ({ name: "this topic" }));
+
+    const coreContent = lessons.map(l => `${l.title}: ${l.content.slice(0, 400)}`).join("\n\n");
+
+    const prompt = `Grade this student mind map on "${sub.name}".\n\nSTUDENT MINDMAP:\n${mindmap}\n\nREFERENCE:\n${coreContent}\n\nRespond ONLY with valid JSON: { "score": <0-100>, "feedback": "<2-3 sentences>", "missing": ["..."], "incorrect": ["..."], "strengths": ["..."] }`;
+
+    const text = await callClaude("You are an expert A-Level examiner.", [{ role:"user", content: prompt }], 800);
+    const result = parseJSON(text) || { score: 0, feedback: "Could not grade." };
+    await require('./gamification').awardXP(req.user.id, 25, "mindmap_graded");
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

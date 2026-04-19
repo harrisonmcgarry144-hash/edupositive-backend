@@ -1,25 +1,67 @@
 const { callAI } = require('./groq_client');
 const db = require('./index');
 
-const SYSTEM_PROMPT = `You are an experienced A-Level teacher writing revision notes for students.
+const SYSTEM_PROMPT = `You are an experienced A-Level teacher writing short, focused revision lessons for students.
 
 CRITICAL WRITING RULES:
-- Write like a real teacher talking to a student, not like an AI assistant
-- Vary your sentence lengths dramatically. Short punchy sentences. Then longer ones that build on a point and add context. Then short again.
-- Use specific, concrete examples and real numbers, not vague generalities
-- Be direct and confident. Never hedge with phrases like "it's worth noting", "it's important to consider", "generally speaking", "to some extent"
-- Never use em dashes. Use commas, full stops, or colons instead
-- Never write in bullet points or numbered lists. Everything is prose paragraphs
-- Never use these words: delve, leverage, underscore, tapestry, realm, game-changer, nuanced, multifaceted, holistic, synergy, paradigm, testament, pivotal
-- Do not use passive voice where you can avoid it
-- Write with a direct, slightly informal but knowledgeable tone, like a teacher who genuinely finds the subject interesting
-- Specific real-world examples make concepts stick. Use them
-- No unnecessary repetition of points already made
-- No bullet points under any circumstances`;
+- Write like a real teacher, not an AI. Keep it direct, confident, specific.
+- Vary sentence lengths dramatically. Short. Then longer, more detailed sentences. Then short again.
+- Use specific examples with real numbers and real scenarios
+- Never use: em dashes, bullet points, numbered lists, "delve", "leverage", "underscore", "tapestry", "realm", "nuanced", "multifaceted", "it's worth noting", "generally speaking", "in today's world"
+- Never hedge. Be direct.
+- Write in flowing prose paragraphs, never lists
+- Each paragraph should be 2-4 sentences maximum. Keep it digestible.`;
 
-async function generateLesson(subtopicId, examBoard) {
-  const subtopic = await db.one(
-    `SELECT st.name AS subtopic, t.name AS topic, s.name AS subject
+// Step 1: AI plans the lessons for this subtopic
+async function planLessons(subjectName, topicName, subtopicName, examBoard) {
+  const prompt = `Plan the mini-lessons for an A-Level ${subjectName} subtopic: "${subtopicName}" (within topic "${topicName}"). Exam board: ${examBoard}.
+
+Return EXACTLY a JSON array of 4-7 lesson titles that progressively build understanding. Each lesson should cover ONE specific aspect in depth. The final lesson should be a synthesis/summary.
+
+Example for "Water" in Biology:
+[
+  "The Polarity of Water",
+  "Hydrogen Bonding in Water",
+  "Water as a Solvent",
+  "The Thermal Properties of Water",
+  "Water's Role in Living Organisms",
+  "Summary: Why Water is Essential for Life"
+]
+
+Return ONLY the JSON array, no other text. Make each title specific and narrow in scope.`;
+
+  const text = await callAI(SYSTEM_PROMPT, prompt, 500);
+  try {
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]);
+  } catch(e) {}
+  return [subtopicName]; // fallback
+}
+
+// Step 2: Generate one specific mini-lesson
+async function generateMiniLesson(subjectName, topicName, subtopicName, lessonTitle, examBoard, lessonIndex, totalLessons) {
+  const isSummary = lessonIndex === totalLessons - 1;
+
+  const prompt = `Write a short focused A-Level revision lesson titled "${lessonTitle}".
+
+Context: This is lesson ${lessonIndex + 1} of ${totalLessons} for the subtopic "${subtopicName}" in ${subjectName} (${examBoard}, topic: ${topicName}).
+${isSummary ? "This is the FINAL lesson - a synthesis that ties together everything from the previous lessons." : "This lesson focuses narrowly on ONE specific aspect of the subtopic."}
+
+Structure the lesson with these sections using ## headers:
+## Introduction
+## Core Concepts
+## Key Details
+${isSummary ? "## Summary" : "## Worked Examples\n## Summary"}
+
+Each section should be 1-2 SHORT paragraphs (2-4 sentences each). Total lesson must be around 5 paragraphs maximum. Be specific, concrete, and exam-focused. Use real examples and numbers.`;
+
+  return await callAI(SYSTEM_PROMPT, prompt, 1500);
+}
+
+async function generateLessonsForSubtopic(subtopicId, examBoard, onProgress) {
+  const sub = await db.one(
+    `SELECT st.id, st.name AS subtopic, t.name AS topic, s.name AS subject
      FROM subtopics st
      JOIN topics t ON t.id = st.topic_id
      JOIN subjects s ON s.id = t.subject_id
@@ -27,29 +69,37 @@ async function generateLesson(subtopicId, examBoard) {
     [subtopicId]
   );
 
-  const { subject, topic, subtopic: subtopicName } = subtopic;
+  // Check if lessons already exist
+  const existing = await db.many(
+    `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`,
+    [subtopicId, examBoard]
+  );
+  if (existing[0]?.count > 0) return { skipped: true };
 
-  const prompt = `Write a complete A-Level revision lesson on "${subtopicName}" for ${examBoard} ${subject} (topic: ${topic}).
+  // Plan the lessons
+  const titles = await planLessons(sub.subject, sub.topic, sub.subtopic, examBoard);
 
-The lesson should cover everything a student needs to know for their ${examBoard} A-Level exam on this specific subtopic.
-
-Structure the lesson with these sections (use ## for headers):
-## Introduction
-## Core Concepts
-## Key Details
-## Worked Examples
-## Common Exam Mistakes
-## Summary
-
-Each section should be 2-4 substantial paragraphs of flowing prose. Be specific to the ${examBoard} specification. Include real examples, specific facts, and the kind of insight that separates an A* student from a B student. Do not use bullet points or lists at all.`;
-
-  return await callAI(SYSTEM_PROMPT, prompt, 2000);
+  // Generate each one
+  for (let i = 0; i < titles.length; i++) {
+    try {
+      const content = await generateMiniLesson(sub.subject, sub.topic, sub.subtopic, titles[i], examBoard, i, titles.length);
+      await db.query(
+        `INSERT INTO lessons (subtopic_id, title, content, exam_board, is_ai_generated, is_published)
+         VALUES ($1, $2, $3, $4, true, true)`,
+        [subtopicId, titles[i], content, examBoard]
+      );
+      if (onProgress) onProgress(i + 1, titles.length);
+      await new Promise(r => setTimeout(r, 300));
+    } catch(e) {
+      console.error(`Failed lesson for ${sub.subtopic} - ${titles[i]}:`, e.message);
+    }
+  }
+  return { total: titles.length };
 }
 
 async function generateLessonsForSubject(subjectId, examBoard, onProgress) {
   const subtopics = await db.many(
-    `SELECT st.id, st.name AS subtopic, t.name AS topic
-     FROM subtopics st
+    `SELECT st.id FROM subtopics st
      JOIN topics t ON t.id = st.topic_id
      WHERE t.subject_id = $1
      ORDER BY t.order_index, st.order_index`,
@@ -57,59 +107,26 @@ async function generateLessonsForSubject(subjectId, examBoard, onProgress) {
   );
 
   let completed = 0;
-  const total = subtopics.length;
-
   for (const sub of subtopics) {
-    const existing = await db.one(
-      `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`,
-      [sub.id, examBoard]
-    );
-
-    if (existing.count === 0) {
-      try {
-        const content = await generateLesson(sub.id, examBoard);
-        await db.query(
-          `INSERT INTO lessons (subtopic_id, title, content, exam_board, is_ai_generated)
-           VALUES ($1, $2, $3, $4, true)`,
-          [sub.id, sub.subtopic, content, examBoard]
-        );
-      } catch (e) {
-        console.error(`Failed to generate lesson for ${sub.subtopic}:`, e.message);
-      }
-    }
-
+    await generateLessonsForSubtopic(sub.id, examBoard);
     completed++;
-    if (onProgress) onProgress(completed, total);
-    await new Promise(r => setTimeout(r, 200));
+    if (onProgress) onProgress(completed, subtopics.length);
   }
-
-  return { completed, total };
-}
-
-async function isSubjectGenerated(subjectId, examBoard) {
-  const result = await db.one(
-    `SELECT COUNT(DISTINCT st.id)::int AS total_subtopics,
-            COUNT(DISTINCT l.subtopic_id)::int AS generated_lessons
-     FROM subtopics st
-     JOIN topics t ON t.id = st.topic_id
-     LEFT JOIN lessons l ON l.subtopic_id = st.id AND l.exam_board = $2
-     WHERE t.subject_id = $1`,
-    [subjectId, examBoard]
-  );
-  return result.total_subtopics > 0 && result.generated_lessons >= result.total_subtopics;
+  return { completed, total: subtopics.length };
 }
 
 async function getGenerationProgress(subjectId, examBoard) {
   const result = await db.one(
-    `SELECT COUNT(DISTINCT st.id)::int AS total,
-            COUNT(DISTINCT l.subtopic_id)::int AS done
+    `SELECT COUNT(DISTINCT st.id)::int AS total_subtopics,
+            COUNT(DISTINCT st.id) FILTER (WHERE EXISTS (
+              SELECT 1 FROM lessons l WHERE l.subtopic_id = st.id AND l.exam_board = $2
+            ))::int AS done_subtopics
      FROM subtopics st
      JOIN topics t ON t.id = st.topic_id
-     LEFT JOIN lessons l ON l.subtopic_id = st.id AND l.exam_board = $2
      WHERE t.subject_id = $1`,
     [subjectId, examBoard]
   );
-  return { total: result.total, done: result.done };
+  return { total: result.total_subtopics, done: result.done_subtopics };
 }
 
-module.exports = { generateLessonsForSubject, isSubjectGenerated, getGenerationProgress };
+module.exports = { generateLessonsForSubject, generateLessonsForSubtopic, getGenerationProgress };

@@ -365,4 +365,18 @@ Return ONLY valid JSON:
   } catch (err) { next(err); }
 });
 
+// POST /api/content/lessons/:id/paragraph-quiz
+router.post("/lessons/:id/paragraph-quiz", authenticate, async (req, res, next) => {
+  try {
+    const { paragraph } = req.body;
+    if (!paragraph?.trim()) return res.status(400).json({ error: "paragraph required" });
+    const { callAI } = require('./groq_client');
+    const prompt = `Generate one quick-check question based on this paragraph. Return ONLY valid JSON: { "question": "...", "options": ["A","B","C","D"], "correctIndex": 0, "answer": "1-2 sentence explanation" }\n\nPARAGRAPH: ${paragraph}`;
+    const text = await callAI("You create quick-check questions for students.", prompt, 400);
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    res.json(JSON.parse(match ? match[0] : cleaned));
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
