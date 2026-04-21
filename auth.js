@@ -5,7 +5,6 @@ const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 const db = require("./index");
 const email = require("./email");
-const { awardXP } = require("./gamification");
 const { authenticate } = require("./authmiddleware");
 
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15 });
@@ -29,7 +28,7 @@ router.post("/register", limiter, async (req, res, next) => {
 
     const hash = await bcrypt.hash(password, 12);
     const code = generateCode();
-    const codeExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+    const codeExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     const user = await db.one(
       `INSERT INTO users (email, password_hash, username, full_name, verify_token, verify_expires, is_verified)
@@ -39,7 +38,6 @@ router.post("/register", limiter, async (req, res, next) => {
 
     try { await email.sendVerificationCode(rawEmail, username, code); } catch (e) { console.error("Email failed:", e.message); }
 
-    // Return token so they can call the verify endpoint
     res.status(201).json({
       message: "Account created. Check your email for a 4-digit code.",
       token: sign(user.id),
@@ -62,13 +60,11 @@ router.post("/verify-code", authenticate, async (req, res, next) => {
 
     if (user.is_verified) return res.json({ message: "Already verified" });
 
-    if (!user.verify_token || user.verify_token !== String(code).trim()) {
+    if (!user.verify_token || user.verify_token !== String(code).trim())
       return res.status(400).json({ error: "Incorrect code. Please try again." });
-    }
 
-    if (new Date() > new Date(user.verify_expires)) {
+    if (new Date() > new Date(user.verify_expires))
       return res.status(400).json({ error: "Code has expired. Request a new one." });
-    }
 
     await db.query(
       "UPDATE users SET is_verified=true, verify_token=NULL, verify_expires=NULL WHERE id=$1",
@@ -87,11 +83,9 @@ router.post("/resend-code", authenticate, async (req, res, next) => {
 
     const code = generateCode();
     const codeExpires = new Date(Date.now() + 15 * 60 * 1000);
-
     await db.query("UPDATE users SET verify_token=$1, verify_expires=$2 WHERE id=$3", [code, codeExpires, req.user.id]);
 
     try { await email.sendVerificationCode(user.email, user.username, code); } catch (e) { console.error("Email failed:", e.message); }
-
     res.json({ message: "New code sent to your email." });
   } catch (err) { next(err); }
 });
@@ -109,14 +103,11 @@ router.post("/login", limiter, async (req, res, next) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
-    // Block login if not verified
     if (!user.is_verified) {
-      // Resend a fresh code
       const code = generateCode();
       const codeExpires = new Date(Date.now() + 15 * 60 * 1000);
       await db.query("UPDATE users SET verify_token=$1, verify_expires=$2 WHERE id=$3", [code, codeExpires, user.id]);
       try { await email.sendVerificationCode(user.email, user.username, code); } catch(e) {}
-
       return res.status(403).json({
         error: "Please verify your email first.",
         requiresVerification: true,
@@ -126,8 +117,14 @@ router.post("/login", limiter, async (req, res, next) => {
 
     await updateStreak(user.id);
     const fresh = await db.one("SELECT * FROM users WHERE id=$1", [user.id]);
+
+    // Check if onboarding is complete
+    const hasSubjects = await db.one("SELECT COUNT(*)::int AS count FROM user_subjects WHERE user_id=$1", [user.id]);
+    const needsOnboarding = !fresh.level_type && hasSubjects.count === 0 && fresh.role !== 'admin';
+
     res.json({
       token: sign(user.id),
+      needsOnboarding,
       user: {
         id: fresh.id, email: fresh.email, username: fresh.username,
         fullName: fresh.full_name, avatarUrl: fresh.avatar_url,
@@ -169,15 +166,24 @@ router.post("/reset-password", limiter, async (req, res, next) => {
 // POST /api/auth/onboarding
 router.post("/onboarding", authenticate, async (req, res, next) => {
   try {
-    const { levelType, subjectIds, careerGoal, subject_customisations } = req.body;
-    await db.query("UPDATE users SET level_type=$1, career_goal=$2, subject_customisations=$3 WHERE id=$4",
-      [levelType || null, careerGoal || null, subject_customisations || null, req.user.id]);
+    const { levelType, subjectIds, boardSelections, customisations, careerGoal } = req.body;
+
+    await db.query(
+      "UPDATE users SET level_type=$1, career_goal=$2, subject_customisations=$3 WHERE id=$4",
+      [levelType || 'a-level', careerGoal || null, customisations ? JSON.stringify(customisations) : null, req.user.id]
+    );
+
     if (subjectIds?.length) {
       await db.query("DELETE FROM user_subjects WHERE user_id=$1", [req.user.id]);
       for (const sid of subjectIds) {
-        await db.query("INSERT INTO user_subjects (user_id, subject_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [req.user.id, sid]);
+        const board = boardSelections?.[sid] || 'AQA';
+        await db.query(
+          "INSERT INTO user_subjects (user_id, subject_id, exam_board) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+          [req.user.id, sid, board]
+        );
       }
     }
+
     res.json({ message: "Onboarding complete" });
   } catch (err) { next(err); }
 });
@@ -190,7 +196,7 @@ router.get("/me", authenticate, async (req, res, next) => {
       [req.user.id]
     );
     const subjects = await db.many(
-      "SELECT s.* FROM subjects s JOIN user_subjects us ON us.subject_id=s.id WHERE us.user_id=$1",
+      "SELECT s.*, us.exam_board FROM subjects s JOIN user_subjects us ON us.subject_id=s.id WHERE us.user_id=$1",
       [req.user.id]
     );
     res.json({ ...user, subjects });
