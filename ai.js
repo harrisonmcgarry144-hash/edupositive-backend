@@ -3,7 +3,7 @@ const rateLimit = require("express-rate-limit");
 const db        = require('./index');
 const { authenticate } = require('./authmiddleware');
 const { callChat } = require('./gemini_client');
-const aiLimit = rateLimit({ windowMs: 60_000, max: 30, message: { error: "AI rate limit — wait a moment" } });
+const aiLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "AI rate limit — wait a moment" } });
 
 const PERSONALITIES = {
   friendly:     "You are warm, encouraging, and make learning enjoyable. Use simple language and relatable analogies.",
