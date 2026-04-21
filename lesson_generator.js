@@ -1,4 +1,4 @@
-const { callAI } = require('./groq_client');
+const { callAI } = require('./gemini_client');
 const db = require('./index');
 
 const SYSTEM_PROMPT = `You are an experienced A-Level teacher writing short, focused revision lessons for students.
@@ -96,7 +96,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard, onProgress) {
           [subtopicId, titles[i], content, examBoard]
         );
         if (onProgress) onProgress(i + 1, titles.length);
-        await new Promise(r => setTimeout(r, 1500)); // 1.5s delay between lessons
+        await new Promise(r => setTimeout(r, 500)); // 1.5s delay between lessons
       } catch(e) {
         console.error(`Failed lesson ${titles[i]}:`, e.message);
         // Keep going even if one fails
