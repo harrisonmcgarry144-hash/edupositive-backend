@@ -49,6 +49,8 @@ app.use('/api/payments/webhook', require('./payments').router);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/ranks', ranksRouter);
 
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 app.get("/api/health", (_, res) => res.json({ status: "ok", app: "EduPositive", version: "1.0.0" }));
 
 cron.schedule("0 18 * * *", async () => {

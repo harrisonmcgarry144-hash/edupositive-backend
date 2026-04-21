@@ -152,3 +152,10 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 module.exports = router;
+
+// Keep-alive ping for Render free tier (pings itself every 14 minutes to prevent spin-down)
+const https = require('https');
+setInterval(() => {
+  const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://edupositive-backend.onrender.com';
+  https.get(`${backendUrl}/api/health`, () => {}).on('error', () => {});
+}, 14 * 60 * 1000); // Every 14 minutes
