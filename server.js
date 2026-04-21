@@ -41,6 +41,7 @@ app.use('/api/analytics', require('./advanced_analytics'));
 app.use('/api/classes', require('./classes'));
 app.use('/api/generate', require('./generate_routes'));
 app.use("/api/tutors",       require("./tutors"));
+app.use('/api/flashcards', require('./flashcards_new'));
 app.use("/api/upload",       require("./upload"));
 app.use("/api/admin",        require("./admin"));
 app.use('/api/admin', require('./admin_regenerate'));
