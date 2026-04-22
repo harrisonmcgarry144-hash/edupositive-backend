@@ -3,6 +3,7 @@ const express = require("express");
 const { router: ranksRouter, updateRanks } = require('./ranks');
 const { router: paymentsRouter } = require('./payments');
 const helmet = require("helmet");
+const compression = require('compression');
 const rateLimit = require("express-rate-limit");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
@@ -13,6 +14,9 @@ const app = express();
 
 // Trust proxy (Render)
 app.set('trust proxy', 1);
+
+// Compression - gzip all responses
+app.use(compression());
 
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -82,6 +86,7 @@ app.use('/api/admin',        require('./admin_dashboard'));
 app.use('/api/admin',        require('./tax_tracker'));
 app.use('/api/payments',     paymentsRouter);
 app.use('/api/ranks',        ranksRouter);
+app.use('/api/exams/countdown', require('./exams_countdown'));
 
 // Cron jobs
 cron.schedule('0 0 * * *', () => updateRanks(), { timezone: "Europe/London" });
