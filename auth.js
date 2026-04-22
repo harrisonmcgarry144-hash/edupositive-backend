@@ -22,9 +22,11 @@ router.post("/register", limiter, async (req, res, next) => {
       return res.status(400).json({ error: "Email, password and username are required" });
     if (password.length < 8)
       return res.status(400).json({ error: "Password must be at least 8 characters" });
+    if (!/[0-9]/.test(password) && !/[^a-zA-Z0-9]/.test(password))
+      return res.status(400).json({ error: "Password must contain at least one number or special character" });
 
     const exists = await db.one("SELECT id FROM users WHERE email=$1 OR username=$2", [rawEmail.toLowerCase(), username]);
-    if (exists) return res.status(409).json({ error: "Email or username already taken" });
+    if (exists) return res.status(409).json({ error: "An account with those details already exists" });
 
     const hash = await bcrypt.hash(password, 12);
     const code = generateCode();
@@ -54,20 +56,30 @@ router.post("/verify-code", authenticate, async (req, res, next) => {
     if (!code) return res.status(400).json({ error: "Code required" });
 
     const user = await db.one(
-      "SELECT id, verify_token, verify_expires, is_verified FROM users WHERE id=$1",
+      "SELECT id, verify_token, verify_expires, is_verified, verify_attempts FROM users WHERE id=$1",
       [req.user.id]
     );
 
     if (user.is_verified) return res.json({ message: "Already verified" });
 
-    if (!user.verify_token || user.verify_token !== String(code).trim())
-      return res.status(400).json({ error: "Incorrect code. Please try again." });
+    // Brute force protection - check failed attempts
+    const attempts = user.verify_attempts || 0;
+    if (attempts >= 5) {
+      return res.status(429).json({ error: "Too many incorrect attempts. Please request a new code." });
+    }
 
-    if (new Date() > new Date(user.verify_expires))
+    if (!user.verify_token || user.verify_token !== String(code).trim()) {
+      await db.query("UPDATE users SET verify_attempts=COALESCE(verify_attempts,0)+1 WHERE id=$1", [req.user.id]);
+      const remaining = 4 - attempts;
+      return res.status(400).json({ error: `Incorrect code. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.` });
+    }
+
+    if (new Date() > new Date(user.verify_expires)) {
       return res.status(400).json({ error: "Code has expired. Request a new one." });
+    }
 
     await db.query(
-      "UPDATE users SET is_verified=true, verify_token=NULL, verify_expires=NULL WHERE id=$1",
+      "UPDATE users SET is_verified=true, verify_token=NULL, verify_expires=NULL, verify_attempts=0 WHERE id=$1",
       [req.user.id]
     );
 
