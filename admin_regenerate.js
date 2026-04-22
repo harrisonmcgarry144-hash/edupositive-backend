@@ -52,9 +52,11 @@ async function runRegeneration(wipeFirst = false) {
   try {
     await initDailyTracker();
 
-    if (wipeFirst) {
-      await db.query("DELETE FROM lessons WHERE is_ai_generated=true");
-    }
+    // PERMANENT LESSONS: Wipe is disabled. Lessons are never deleted by the generator.
+  // To delete lessons, use the admin dashboard manually.
+  if (wipeFirst) {
+    console.log("[Regen] Wipe requested but disabled - lessons are permanent. Continuing without wipe.");
+  }
 
     const subtopics = await db.many(
       `SELECT st.id AS subtopic_id, s.name AS subject_name, st.name AS subtopic_name,
@@ -117,8 +119,8 @@ async function runRegeneration(wipeFirst = false) {
 router.post("/regenerate-all", authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: "Admin only" });
   if (isRegenerating) return res.json({ message: "Already running", progress: regenProgress });
-  runRegeneration(true).catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
-  res.json({ message: "Regeneration started (wipe mode)" });
+  runRegeneration(false).catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
+  res.json({ message: "Regeneration started (fills gaps only - existing lessons preserved)" });
 });
 
 router.post("/regenerate-continue", authenticate, async (req, res) => {

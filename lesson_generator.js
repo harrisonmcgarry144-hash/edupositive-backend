@@ -78,11 +78,12 @@ async function generateLessonsForSubtopic(subtopicId, examBoard, onProgress) {
     [subtopicId]
   );
 
+  // PERMANENT LESSONS: Never overwrite or delete existing lessons
   const existing = await db.one(
     `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`,
     [subtopicId, examBoard]
   );
-  if (existing.count > 0) return { skipped: true };
+  if (existing.count > 0) return { skipped: true }; // Already exists - skip permanently
 
   try {
     const titles = await planLessons(sub.subject, sub.topic, sub.subtopic, examBoard);
