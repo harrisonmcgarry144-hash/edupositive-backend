@@ -97,7 +97,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard, onProgress) {
           [subtopicId, titles[i], content, examBoard]
         );
         if (onProgress) onProgress(i + 1, titles.length);
-        await new Promise(r => setTimeout(r, 5000)); // 5s between lessons to avoid Gemini rate limits // 1.5s delay between lessons
+        await new Promise(r => setTimeout(r, 500)); // 5s between lessons to avoid Gemini rate limits // 1.5s delay between lessons
       } catch(e) {
         console.error(`Failed lesson ${titles[i]}:`, e.message);
         // Keep going even if one fails
