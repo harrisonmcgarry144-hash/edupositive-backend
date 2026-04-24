@@ -188,12 +188,7 @@ setInterval(() => {
 
 router.get("/revising-now", async (req, res, next) => {
   try {
-    const realCount = activeSessions.size;
-    // Fallback: DB users active in last 5 mins
-    const dbCount = await db.one(
-      "SELECT COUNT(*)::int AS count FROM users WHERE last_active >= NOW() - INTERVAL '5 minutes'"
-    ).catch(() => ({ count: 0 }));
-    res.json({ count: Math.max(realCount, dbCount.count) });
+    res.json({ count: activeSessions.size });
   } catch (err) { next(err); }
 });
 
