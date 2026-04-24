@@ -2,7 +2,6 @@ const router = require("express").Router();
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const { hasPremium } = require('./payments');
-const { callAI } = require('./gemini_client');
 
 const INTERVALS = [0, 1, 3, 7, 14, 28]; // days between reviews
 
@@ -238,7 +237,17 @@ Rules:
 - Cover the most important exam-relevant facts
 - No bullet points in answers - write in plain sentences`;
 
-    const text = await callAI("You are an expert flashcard creator for A-Level students.", prompt, 2000);
+    const GroqSDK = require('groq-sdk');
+    const groqClient = new GroqSDK({ apiKey: process.env.GROQ_API_KEY });
+    const completion = await groqClient.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      max_tokens: 2000,
+      messages: [
+        { role: "system", content: "You are an expert flashcard creator for A-Level students. Return only valid JSON arrays with no markdown." },
+        { role: "user", content: prompt }
+      ],
+    });
+    const text = completion.choices[0].message.content;
     const cleaned = text.replace(/```json|```/g, '').trim();
     const match = cleaned.match(/\[[\s\S]*\]/);
     if (!match) return res.status(500).json({ error: "Failed to generate cards" });

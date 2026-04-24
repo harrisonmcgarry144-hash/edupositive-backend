@@ -2,8 +2,7 @@ const router    = require("express").Router();
 const rateLimit = require("express-rate-limit");
 const db        = require('./index');
 const { authenticate } = require('./authmiddleware');
-const { callChat } = require('./gemini_client');
-const aiLimit = rateLimit({ windowMs: 60_000, max: 60, message: { error: "AI rate limit — wait a moment" } });
+const aiLimit = rateLimit({ windowMs: 60_000, max: 30, message: { error: "AI rate limit — wait a moment" } });
 
 const PERSONALITIES = {
   friendly:     "You are warm, encouraging, and make learning enjoyable. Use simple language and relatable analogies.",
@@ -18,7 +17,18 @@ const MODES = {
 };
 
 async function callClaude(system, messages, maxTokens = 1000) {
-  return await callChat(system, messages, maxTokens);
+  const Groq = require('groq-sdk');
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  const groqMessages = [
+    { role: "system", content: system },
+    ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: typeof m.content === 'string' ? m.content : (m.content[0]?.text || '') }))
+  ];
+  const res = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    max_tokens: maxTokens,
+    messages: groqMessages,
+  });
+  return res.choices[0].message.content;
 }
 
 function parseJSON(text) {
