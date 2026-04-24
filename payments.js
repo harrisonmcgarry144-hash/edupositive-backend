@@ -14,6 +14,11 @@ function isSunday() {
 
 // Check if user has premium access (paid OR Sunday)
 async function hasPremium(userId) {
+  // Admins always have premium
+  try {
+    const user = await db.one("SELECT role FROM users WHERE id=$1", [userId]);
+    if (user.role === 'admin') return true;
+  } catch(e) {}
   if (isSunday()) return true;
   const user = await db.one("SELECT is_premium, premium_until FROM users WHERE id=$1", [userId]);
   if (!user.is_premium) return false;
