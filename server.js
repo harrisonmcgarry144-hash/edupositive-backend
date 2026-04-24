@@ -68,6 +68,7 @@ app.use('/api/payments/webhook', require('./payments').router);
 
 // Routes
 app.use("/api/auth",         require("./auth"));
+app.use('/api/study', require('./study_features'));
 app.use("/api/users",        require("./users"));
 app.use("/api/content",      require("./content"));
 app.use("/api/flashcards",   require("./flashcards_new"));
