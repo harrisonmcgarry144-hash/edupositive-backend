@@ -14,7 +14,7 @@ CRITICAL WRITING RULES:
 
 // Retry helper with exponential backoff
 async function callAIWithRetry(system, prompt, maxTokens, retries = 3) {
-  let delay = 5000; // Start with 5s
+  let delay = 15000; // Start with 15s
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await callAI(system, prompt, maxTokens);
@@ -22,7 +22,7 @@ async function callAIWithRetry(system, prompt, maxTokens, retries = 3) {
       if (e.message?.includes('429') || e.status === 429) {
         console.log(`[LessonGen] Rate limited. Waiting ${delay/1000}s before retry...`);
         await new Promise(r => setTimeout(r, delay));
-        delay *= 2; // Exponential backoff: 5s, 10s, 20s
+        delay *= 2; // Exponential backoff: 15s, 30s, 60s
       } else if (attempt === retries - 1) {
         throw e;
       } else {
@@ -97,7 +97,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard, onProgress) {
           [subtopicId, titles[i], content, examBoard]
         );
         if (onProgress) onProgress(i + 1, titles.length);
-        await new Promise(r => setTimeout(r, 500)); // 1.5s delay between lessons
+        await new Promise(r => setTimeout(r, 5000)); // 5s between lessons to avoid Gemini rate limits // 1.5s delay between lessons
       } catch(e) {
         console.error(`Failed lesson ${titles[i]}:`, e.message);
         // Keep going even if one fails
