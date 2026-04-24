@@ -39,10 +39,30 @@ router.get("/topics/:id/subtopics", optionalAuth, async (req, res, next) => {
 
 router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
   try {
-    const lessons = await db.many(
-      `SELECT id, title, summary, keywords, created_at FROM lessons WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
-      [req.params.id]
-    );
+    // Return lessons for any exam board - show AQA as fallback if user's board not available
+    const { board } = req.query;
+    let lessons;
+    if (board) {
+      // Try user's board first, fall back to AQA
+      lessons = await db.many(
+        `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
+         WHERE subtopic_id=$1 AND is_published=true AND exam_board=$2 ORDER BY created_at`,
+        [req.params.id, board]
+      );
+      if (lessons.length === 0) {
+        lessons = await db.many(
+          `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
+           WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
+          [req.params.id]
+        );
+      }
+    } else {
+      lessons = await db.many(
+        `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
+         WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
+        [req.params.id]
+      );
+    }
     res.json(lessons);
   } catch (err) { next(err); }
 });
