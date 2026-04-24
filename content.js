@@ -103,14 +103,25 @@ router.get("/subtopics/:id/mindmap", authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/content/lessons/:id/paragraph-quiz — Gemini only
+// POST /api/content/lessons/:id/paragraph-quiz — uses Groq (fast, free tier)
 router.post("/lessons/:id/paragraph-quiz", authenticate, async (req, res, next) => {
   try {
     const { paragraph } = req.body;
     if (!paragraph?.trim()) return res.status(400).json({ error: "paragraph required" });
-    const { callAI } = require('./gemini_client');
-    const prompt = `Generate one quick-check multiple choice question based on this A-Level lesson paragraph.\n\nPARAGRAPH: ${paragraph}\n\nReturn ONLY valid JSON:\n{ "question": "...", "options": ["A","B","C","D"], "correctIndex": 0, "answer": "1-2 sentence explanation" }`;
-    const text = await callAI("You create quick-check questions for A-Level students.", prompt, 400);
+
+    const Groq = require('groq-sdk');
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      max_tokens: 400,
+      messages: [
+        { role: "system", content: "You create quick-check multiple choice questions for A-Level students. Return only valid JSON." },
+        { role: "user", content: `Generate one multiple choice question based on this paragraph.\n\nPARAGRAPH: ${paragraph}\n\nReturn ONLY valid JSON with no markdown:\n{ "question": "...", "options": ["option A", "option B", "option C", "option D"], "correctIndex": 0, "answer": "1-2 sentence explanation of the correct answer" }` }
+      ],
+    });
+
+    const text = completion.choices[0].message.content;
     const cleaned = text.replace(/\`\`\`json|\`\`\`/g, '').trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
     res.json(JSON.parse(match ? match[0] : cleaned));
