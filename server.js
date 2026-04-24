@@ -68,7 +68,6 @@ app.use('/api/payments/webhook', require('./payments').router);
 
 // Routes
 app.use("/api/auth",         require("./auth"));
-app.use('/api/study', require('./study_features'));
 app.use("/api/users",        require("./users"));
 app.use("/api/content",      require("./content"));
 app.use("/api/flashcards",   require("./flashcards_new"));
@@ -87,9 +86,21 @@ app.use('/api/admin',        require('./admin_dashboard'));
 app.use('/api/admin',        require('./tax_tracker'));
 app.use('/api/payments',     paymentsRouter);
 app.use('/api/ranks',        ranksRouter);
+app.use('/api/supercurricular', require('./super_curricular'));
+app.use('/api/study',           require('./study_features'));
 app.use('/api/exams/countdown', require('./exams_countdown'));
 
 // Cron jobs
+// Yearly XP reset - 1st January at midnight
+cron.schedule('0 0 1 1 *', async () => {
+  try {
+    console.log('[XP Reset] Running yearly XP reset...');
+    await require('./index').query(
+      "UPDATE users SET xp_total_ever=xp_total_ever+xp, xp=0, level=1, xp_year=EXTRACT(YEAR FROM NOW())::INT, last_xp_reset=CURRENT_DATE"
+    );
+    console.log('[XP Reset] Done');
+  } catch(e) { console.error('[XP Reset] Failed:', e.message); }
+}, { timezone: "Europe/London" });
 cron.schedule('0 0 * * *', () => updateRanks(), { timezone: "Europe/London" });
 cron.schedule('0 16 * * *', () => sendDailyRevisionEmails(), { timezone: "Europe/London" });
 cron.schedule("0 18 * * *", async () => {

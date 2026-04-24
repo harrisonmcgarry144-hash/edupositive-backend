@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const { awardXP } = require('./gamification');
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const Groq = require('groq-sdk');
@@ -14,6 +15,40 @@ async function callGroq(system, user, maxTokens = 1000, model = "llama-3.3-70b-v
 }
 
 // ── Mistake Bank ─────────────────────────────────────────────────────────────
+
+// POST /api/study/xp - award XP for various actions
+router.post("/xp", authenticate, async (req, res, next) => {
+  try {
+    const { action, score, metadata } = req.body;
+    const XP_MAP = {
+      question_attempted: 5,
+      question_correct: 20,
+      question_streak_3: 30,
+      blurt_submitted: 25,
+      blurt_score_50: 30,
+      blurt_score_80: 60,
+      blurt_perfect: 100,
+      mindmap_submitted: 20,
+      mindmap_score_70: 40,
+      rapidfire_completed: 30,
+      rapidfire_score_70: 50,
+      boss_battle_attempted: 40,
+      boss_battle_passed: 100,
+      recall_completed: 30,
+      flashcard_reviewed: 5,
+      flashcard_correct: 10,
+      flashcard_mastered: 25,
+      flashcard_deck_completed: 50,
+      supercurricular_generated: 30,
+      study_30_mins: 25,
+      study_60_mins: 60,
+    };
+    const amount = XP_MAP[action];
+    if (!amount) return res.status(400).json({ error: "Unknown action" });
+    const earned = await awardXP(req.user.id, amount, action);
+    res.json({ earned });
+  } catch(err) { next(err); }
+});
 
 router.post("/mistakes", authenticate, async (req, res, next) => {
   try {
