@@ -277,4 +277,24 @@ Rules:
   } catch (err) { next(err); }
 });
 
+// GET /api/flashcards/daily — all due cards across all decks (alias for /due)
+router.get("/daily", authenticate, async (req, res, next) => {
+  try {
+    const due = await db.one(
+      `SELECT COUNT(*)::int AS count FROM flashcard_progress
+       WHERE user_id=$1 AND next_review <= CURRENT_DATE AND is_mastered=false`,
+      [req.user.id]
+    );
+    // Also get due cards per deck
+    const byDeck = await db.many(
+      `SELECT fp.deck_id, COUNT(*)::int AS due_count
+       FROM flashcard_progress fp
+       WHERE fp.user_id=$1 AND fp.next_review <= CURRENT_DATE AND fp.is_mastered=false
+       GROUP BY fp.deck_id`,
+      [req.user.id]
+    ).catch(() => []);
+    res.json({ dueCount: due.count, byDeck });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

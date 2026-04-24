@@ -3,26 +3,20 @@ const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const { generateLessonsForSubtopic } = require('./lesson_generator');
 
-const DAILY_LIMIT = 1500; // Gemini free tier
+const DAILY_LIMIT = 1500;
+const CONCURRENCY = 3; // Generate 3 subtopics at a time
 
 let isRegenerating = false;
-let regenProgress = { done: 0, total: 0, current: "", errors: 0, todayCount: 0 };
+let regenProgress = { done: 0, total: 0, current: '', errors: 0, todayCount: 0, dailyLimit: DAILY_LIMIT };
 
 async function initDailyTracker() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS ai_daily_usage (
-      date DATE PRIMARY KEY,
-      lessons_generated INT NOT NULL DEFAULT 0
-    )
-  `).catch(() => {});
+  await db.query(`CREATE TABLE IF NOT EXISTS ai_daily_usage (date DATE PRIMARY KEY, lessons_generated INT NOT NULL DEFAULT 0)`).catch(() => {});
 }
 
 async function getTodayUsage() {
   const today = new Date().toISOString().slice(0, 10);
   const row = await db.one(
-    `INSERT INTO ai_daily_usage (date, lessons_generated) VALUES ($1, 0)
-     ON CONFLICT (date) DO UPDATE SET lessons_generated = ai_daily_usage.lessons_generated
-     RETURNING lessons_generated`,
+    `INSERT INTO ai_daily_usage (date, lessons_generated) VALUES ($1, 0) ON CONFLICT (date) DO UPDATE SET lessons_generated = ai_daily_usage.lessons_generated RETURNING lessons_generated`,
     [today]
   ).catch(() => ({ lessons_generated: 0 }));
   return row.lessons_generated;
@@ -31,32 +25,22 @@ async function getTodayUsage() {
 async function incrementTodayUsage(count = 1) {
   const today = new Date().toISOString().slice(0, 10);
   await db.query(
-    `INSERT INTO ai_daily_usage (date, lessons_generated) VALUES ($1, $2)
-     ON CONFLICT (date) DO UPDATE SET lessons_generated = ai_daily_usage.lessons_generated + $2`,
+    `INSERT INTO ai_daily_usage (date, lessons_generated) VALUES ($1, $2) ON CONFLICT (date) DO UPDATE SET lessons_generated = ai_daily_usage.lessons_generated + $2`,
     [today, count]
   ).catch(() => {});
 }
 
-async function countLessonsForSubtopic(subtopicId, examBoard) {
-  const row = await db.one(
-    `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`,
-    [subtopicId, examBoard]
-  ).catch(() => ({ count: 0 }));
+async function countLessons(subtopicId, examBoard) {
+  const row = await db.one(`SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`, [subtopicId, examBoard]).catch(() => ({ count: 0 }));
   return row.count;
 }
 
-async function runRegeneration(wipeFirst = false) {
+async function runRegeneration() {
   if (isRegenerating) return;
   isRegenerating = true;
 
   try {
     await initDailyTracker();
-
-    // PERMANENT LESSONS: Wipe is disabled. Lessons are never deleted by the generator.
-  // To delete lessons, use the admin dashboard manually.
-  if (wipeFirst) {
-    console.log("[Regen] Wipe requested but disabled - lessons are permanent. Continuing without wipe.");
-  }
 
     const subtopics = await db.many(
       `SELECT st.id AS subtopic_id, s.name AS subject_name, st.name AS subtopic_name,
@@ -70,94 +54,88 @@ async function runRegeneration(wipeFirst = false) {
 
     const todo = subtopics.filter(s => !s.already_done);
     const todayUsed = await getTodayUsage();
-    regenProgress = {
-      done: subtopics.length - todo.length,
-      total: subtopics.length,
-      current: "",
-      errors: 0,
-      todayCount: todayUsed,
-      dailyLimit: DAILY_LIMIT,
-    };
 
-    console.log(`[Regen] Starting. ${todo.length} subtopics remaining. Today used: ${todayUsed}/${DAILY_LIMIT}`);
+    regenProgress = { done: subtopics.length - todo.length, total: subtopics.length, current: '', errors: 0, todayCount: todayUsed, dailyLimit: DAILY_LIMIT };
+    console.log(`[Regen] Starting. ${todo.length} subtopics remaining. Today: ${todayUsed}/${DAILY_LIMIT}`);
 
-    for (const sub of todo) {
+    // Process in batches of CONCURRENCY
+    for (let i = 0; i < todo.length; i += CONCURRENCY) {
       const currentUsage = await getTodayUsage();
       if (currentUsage >= DAILY_LIMIT) {
-        console.log(`[Regen] Daily limit of ${DAILY_LIMIT} reached. Pausing until tomorrow.`);
-        regenProgress.current = `Daily limit reached. Continuing tomorrow.`;
+        console.log(`[Regen] Daily limit reached. Pausing.`);
+        regenProgress.current = 'Daily limit reached. Continuing tomorrow.';
         regenProgress.todayCount = currentUsage;
         break;
       }
 
-      regenProgress.current = `${sub.subject_name} - ${sub.subtopic_name}`;
+      const batch = todo.slice(i, i + CONCURRENCY);
+      regenProgress.current = batch.map(s => s.subtopic_name).join(', ');
       regenProgress.todayCount = currentUsage;
 
-      try {
-        const lessonsBefore = await countLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
-        await generateLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
-        const lessonsAfter = await countLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
-        const newLessons = lessonsAfter - lessonsBefore;
-        if (newLessons > 0) {
-          await incrementTodayUsage(newLessons);
+      // Run batch in parallel
+      await Promise.all(batch.map(async (sub) => {
+        try {
+          const before = await countLessons(sub.subtopic_id, sub.exam_board);
+          await generateLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
+          const after = await countLessons(sub.subtopic_id, sub.exam_board);
+          const newLessons = after - before;
+          if (newLessons > 0) await incrementTodayUsage(newLessons);
+        } catch(e) {
+          console.error(`[Regen] Failed ${sub.subtopic_name}:`, e.message);
+          regenProgress.errors++;
         }
-      } catch (e) {
-        console.error(`[Regen] Failed for ${sub.subtopic_name}:`, e.message);
-        regenProgress.errors++;
-      }
-      regenProgress.done++;
+        regenProgress.done++;
+      }));
     }
 
-    regenProgress.current = regenProgress.done >= regenProgress.total ? "Complete!" : "Paused for today";
-  } catch (e) {
-    console.error("[Regen] Critical error:", e);
+    regenProgress.current = regenProgress.done >= regenProgress.total ? 'Complete!' : 'Paused for today';
+  } catch(e) {
+    console.error('[Regen] Critical error:', e.message);
   } finally {
     isRegenerating = false;
   }
 }
 
+// Routes
 router.post("/regenerate-all", authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: "Admin only" });
   if (isRegenerating) return res.json({ message: "Already running", progress: regenProgress });
-  runRegeneration(false).catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
+  // NOTE: No wipe - lessons are permanent
+  runRegeneration().catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
   res.json({ message: "Regeneration started (fills gaps only - existing lessons preserved)" });
 });
 
 router.post("/regenerate-continue", authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: "Admin only" });
   if (isRegenerating) return res.json({ message: "Already running", progress: regenProgress });
-  runRegeneration(false).catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
+  runRegeneration().catch(e => { console.error("Regen crashed:", e); isRegenerating = false; });
   res.json({ message: "Regeneration resumed" });
 });
 
 router.get("/regenerate-status", authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: "Admin only" });
   const todayUsed = await getTodayUsage();
-  res.json({
-    isRegenerating,
-    progress: { ...regenProgress, todayCount: todayUsed, dailyLimit: DAILY_LIMIT },
-  });
+  res.json({ isRegenerating, progress: { ...regenProgress, todayCount: todayUsed, dailyLimit: DAILY_LIMIT } });
 });
 
-// Auto-resume on server startup (no user needs to be online)
+// Auto-resume 30s after startup
 setTimeout(() => {
-  console.log("[Regen] Server boot - auto-resuming lesson generation...");
-  runRegeneration(false).catch(e => console.error("Auto-regen crashed:", e));
+  console.log("[Regen] Auto-resuming...");
+  runRegeneration().catch(e => console.error("Auto-regen crashed:", e));
 }, 30000);
 
-// Hourly check - picks up again after daily limit resets at midnight
+// Hourly check
 setInterval(() => {
   if (!isRegenerating) {
-    console.log("[Regen] Hourly check - resuming...");
-    runRegeneration(false).catch(e => console.error("Hourly-regen crashed:", e));
+    console.log("[Regen] Hourly check...");
+    runRegeneration().catch(e => console.error("Hourly regen crashed:", e));
   }
 }, 60 * 60 * 1000);
 
-module.exports = router;
-
-// Keep-alive ping for Render free tier (pings itself every 14 minutes to prevent spin-down)
+// Keep-alive ping for Render free tier
 const https = require('https');
 setInterval(() => {
-  const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://edupositive-backend.onrender.com';
-  https.get(`${backendUrl}/api/health`, () => {}).on('error', () => {});
-}, 14 * 60 * 1000); // Every 14 minutes
+  https.get('https://edupositive-backend.onrender.com/api/health', () => {}).on('error', () => {});
+}, 14 * 60 * 1000);
+
+module.exports = router;

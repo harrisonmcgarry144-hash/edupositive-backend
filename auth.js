@@ -66,8 +66,8 @@ router.post("/resend-code", authenticate, async (req, res, next) => {
 router.post("/login", limiter, async (req, res, next) => {
   try {
     const { email: rawEmail, username: rawUsername, password } = req.body;
-    const identifier = (rawUsername || rawEmail || "").toLowerCase();
-    if (!identifier || !password) return res.status(400).json({ error: "Username and password required" });
+    const identifier = (rawUsername || rawEmail || "").toLowerCase().trim();
+    if (!identifier || !password) return res.status(400).json({ error: "Email or username and password required" });
     const user = await db.one("SELECT * FROM users WHERE username=$1 OR email=$1", [identifier]);
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
     const lockoutUntil = user.lockout_until ? new Date(user.lockout_until) : null;

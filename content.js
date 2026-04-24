@@ -8,12 +8,15 @@ router.get("/subjects", optionalAuth, async (req, res, next) => {
     const subjects = levelType
       ? await db.many("SELECT * FROM subjects WHERE level_type=$1 ORDER BY name", [levelType])
       : await db.many("SELECT * FROM subjects ORDER BY name");
+    // Cache subjects for 5 minutes - they rarely change
+    res.setHeader('Cache-Control', 'public, max-age=300');
     res.json(subjects);
   } catch (err) { next(err); }
 });
 
 router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
   try {
+    res.setHeader('Cache-Control', 'public, max-age=300');
     const topics = await db.many(
       `SELECT t.*,
          COALESCE(json_agg(
