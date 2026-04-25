@@ -7,7 +7,7 @@ const DAILY_LIMIT = 1500;
 const CONCURRENCY = 1; // One subtopic at a time to avoid Gemini rate limits
 
 let isRegenerating = false;
-let regenProgress = { done: 0, total: 0, current: '', errors: 0, todayCount: 0, dailyLimit: DAILY_LIMIT };
+let regenProgress = { done: 0, total: 0, current: '', errors: 0, todayCount: 0, dailyLimit: DAILY_LIMIT, lastError: '' };
 
 async function initDailyTracker() {
   await db.query(`CREATE TABLE IF NOT EXISTS ai_daily_usage (date DATE PRIMARY KEY, lessons_generated INT NOT NULL DEFAULT 0)`).catch(() => {});
@@ -79,13 +79,20 @@ async function runRegeneration() {
       await Promise.all(batch.map(async (sub) => {
         try {
           const before = await countLessons(sub.subtopic_id, sub.exam_board);
-          await generateLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
-          const after = await countLessons(sub.subtopic_id, sub.exam_board);
-          const newLessons = after - before;
-          if (newLessons > 0) await incrementTodayUsage(newLessons);
+          const result = await generateLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
+          if (result.error) {
+            console.error(`[Regen] Failed ${sub.subtopic_name}:`, result.error);
+            regenProgress.errors++;
+            regenProgress.lastError = `${sub.subtopic_name}: ${result.error}`;
+          } else if (!result.skipped) {
+            const after = await countLessons(sub.subtopic_id, sub.exam_board);
+            const newLessons = after - before;
+            if (newLessons > 0) await incrementTodayUsage(newLessons);
+          }
         } catch(e) {
           console.error(`[Regen] Failed ${sub.subtopic_name}:`, e.message);
           regenProgress.errors++;
+          regenProgress.lastError = `${sub.subtopic_name}: ${e.message}`;
         }
         regenProgress.done++;
       }));

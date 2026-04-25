@@ -78,7 +78,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
 
   // PERMANENT: never overwrite existing lessons
   const existing = await db.one(
-    `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2`,
+    `SELECT COUNT(*)::int AS count FROM lessons WHERE subtopic_id=$1 AND exam_board=$2 AND is_published=true`,
     [subtopicId, examBoard]
   );
   if (existing.count > 0) return { skipped: true };
