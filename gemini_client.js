@@ -40,6 +40,8 @@ async function callChat(systemPrompt, messages, maxTokens = 1500) {
 
   const chat = model.startChat({ history });
   const result = await chat.sendMessage(lastText);
+  const blocked = result.response.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`Gemini blocked content: ${blocked}`);
   return result.response.text();
 }
 

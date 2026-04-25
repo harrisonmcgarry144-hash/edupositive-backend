@@ -108,19 +108,19 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
 
     // Generate lessons sequentially to stay within Gemini rate limits
     const results = [];
+    let quotaHit = false;
     for (let i = 0; i < titles.length; i++) {
       try {
         const content = await generateMiniLesson(sub.subject, sub.topic, sub.subtopic, titles[i], examBoard, i, titles.length);
         results.push({ title: titles[i], content, i });
       } catch (err) {
-        if (err.message === 'QUOTA_EXHAUSTED') throw err; // propagate — don't waste more retries
+        if (err.message === 'QUOTA_EXHAUSTED') { quotaHit = true; break; } // save what we have first
         console.error(`[LessonGen] Failed lesson "${titles[i]}":`, err.message);
         results.push(null);
       }
-      // pacing handled by waitForRateLimit inside callAIWithRetry
     }
 
-    // Insert all lessons
+    // Insert whatever was generated before any quota hit
     for (const r of results) {
       if (!r || !r.content) continue;
       await db.query(
@@ -130,6 +130,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
       );
     }
 
+    if (quotaHit) return { error: 'QUOTA_EXHAUSTED' };
     return { total: results.filter(Boolean).length };
   } catch(e) {
     console.error(`[LessonGen] Failed subtopic "${sub.subtopic}":`, e.message);
