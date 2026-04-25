@@ -29,7 +29,7 @@ router.post("/friends/request", authenticate, async (req, res, next) => {
       [req.user.id, receiverId]
     );
     if (f) {
-      req.app.get("io").to(`user:${receiverId}`).emit("friend_request", { from: req.user.id });
+      req.app.get("io")?.to(`user:${receiverId}`).emit("friend_request", { from: req.user.id });
     }
     res.json(f || { message: "Request already sent" });
   } catch (err) { next(err); }

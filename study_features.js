@@ -154,7 +154,9 @@ Include a mix of mcq (4), short (2), error_spot (2). Make questions exam-style.`
     );
     const cleaned = text.replace(/```json|```/g, '').trim();
     const match = cleaned.match(/\[[\s\S]*\]/);
-    const questions = JSON.parse(match ? match[0] : cleaned);
+    let questions;
+    try { questions = JSON.parse(match ? match[0] : cleaned); }
+    catch { return res.status(502).json({ error: "AI returned invalid response" }); }
     res.json({ questions, subtopic, subject });
   } catch(err) { next(err); }
 });
@@ -208,7 +210,10 @@ Return ONLY the JSON object, no markdown.`;
     const text = await callGroq("You create interactive revision questions. Return only valid JSON.", prompt, 600, "llama-3.1-8b-instant");
     const cleaned = text.replace(/```json|```/g, '').trim();
     const match = cleaned.match(/\{[\s\S]*\}/);
-    res.json(JSON.parse(match ? match[0] : cleaned));
+    let parsed;
+    try { parsed = JSON.parse(match ? match[0] : cleaned); }
+    catch { return res.status(502).json({ error: "AI returned invalid response" }); }
+    res.json(parsed);
   } catch(err) { next(err); }
 });
 

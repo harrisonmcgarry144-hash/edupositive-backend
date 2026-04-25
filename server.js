@@ -101,8 +101,8 @@ cron.schedule('0 0 1 1 *', async () => {
     console.log('[XP Reset] Done');
   } catch(e) { console.error('[XP Reset] Failed:', e.message); }
 }, { timezone: "Europe/London" });
-cron.schedule('0 0 * * *', () => updateRanks(), { timezone: "Europe/London" });
-cron.schedule('0 16 * * *', () => sendDailyRevisionEmails(), { timezone: "Europe/London" });
+cron.schedule('0 0 * * *', async () => { try { await updateRanks(); } catch(e) { console.error('[Ranks] Failed:', e.message); } }, { timezone: "Europe/London" });
+cron.schedule('0 16 * * *', async () => { try { await sendDailyRevisionEmails(); } catch(e) { console.error('[Email] Failed:', e.message); } }, { timezone: "Europe/London" });
 cron.schedule("0 18 * * *", async () => {
   try { await require("./notifications").sendDailyStreakReminders(); } catch(e) { console.error("Streak reminder failed:", e.message); }
 });

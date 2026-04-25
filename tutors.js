@@ -104,18 +104,20 @@ router.post("/:id/book", authenticate, async (req, res, next) => {
 // PUT /api/tutors/sessions/:id/confirm
 router.put("/sessions/:id/confirm", authenticate, async (req, res, next) => {
   try {
-    const session = await db.one(
+    const session = await db.oneOrNone(
       `SELECT ts.*, tp.user_id AS tutor_user_id FROM tutor_sessions ts
        JOIN tutor_profiles tp ON tp.id=ts.tutor_id WHERE ts.id=$1`,
       [req.params.id]
     );
-    if (!session || session.tutor_user_id !== req.user.id)
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (session.tutor_user_id !== req.user.id)
       return res.status(403).json({ error: "Not your session" });
-    const updated = await db.one(
+    const updated = await db.oneOrNone(
       "UPDATE tutor_sessions SET status='confirmed', meeting_url=$1 WHERE id=$2 RETURNING *",
       [req.body.meetingUrl || null, req.params.id]
     );
-    req.app.get("io").to(`user:${session.student_id}`).emit("session_confirmed", { session: updated });
+    if (!updated) return res.status(404).json({ error: "Session not found" });
+    req.app.get("io")?.to(`user:${session.student_id}`).emit("session_confirmed", { session: updated });
     res.json(updated);
   } catch (err) { next(err); }
 });

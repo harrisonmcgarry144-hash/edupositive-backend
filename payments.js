@@ -25,7 +25,8 @@ async function hasPremium(userId) {
     if (user.role === 'admin') return true;
   } catch(e) {}
   if (isSunday()) return true;
-  const user = await db.one("SELECT is_premium, premium_until FROM users WHERE id=$1", [userId]);
+  const user = await db.oneOrNone("SELECT is_premium, premium_until FROM users WHERE id=$1", [userId]);
+  if (!user) return false;
   if (!user.is_premium) return false;
   if (user.premium_until && new Date(user.premium_until) < new Date()) {
     await db.query("UPDATE users SET is_premium=false WHERE id=$1", [userId]);

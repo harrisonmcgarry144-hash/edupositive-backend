@@ -39,7 +39,7 @@ router.get("/users", async (req, res, next) => {
     if (q)    query += ` AND (username ILIKE $${p.push(`%${q}%`)} OR email ILIKE $${p.length})`;
     if (role) query += ` AND role=$${p.push(role)}`;
     query += " ORDER BY created_at DESC LIMIT 100";
-    res.json(await db.many(query, p));
+    res.json(await db.manyOrNone(query, p) ?? []);
   } catch (err) { next(err); }
 });
 
