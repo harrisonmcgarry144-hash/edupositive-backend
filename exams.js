@@ -79,6 +79,11 @@ router.post("/attempts", authenticate, async (req, res, next) => {
 router.post("/attempts/:id/answer", authenticate, async (req, res, next) => {
   try {
     const { questionId, answerText } = req.body;
+    const attempt = await db.oneOrNone(
+      "SELECT id FROM exam_attempts WHERE id=$1 AND user_id=$2",
+      [req.params.id, req.user.id]
+    );
+    if (!attempt) return res.status(404).json({ error: "Attempt not found" });
     await db.query(
       `INSERT INTO exam_answers (attempt_id, question_id, answer_text) VALUES ($1,$2,$3)
        ON CONFLICT (attempt_id, question_id) DO UPDATE SET answer_text=$3`,
@@ -118,7 +123,7 @@ router.get("/attempts", authenticate, async (req, res, next) => {
 // GET /api/exams/attempts/:id
 router.get("/attempts/:id", authenticate, async (req, res, next) => {
   try {
-    const attempt = await db.one(
+    const attempt = await db.oneOrNone(
       "SELECT * FROM exam_attempts WHERE id=$1 AND user_id=$2",
       [req.params.id, req.user.id]
     );

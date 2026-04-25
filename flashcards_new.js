@@ -266,15 +266,18 @@ Rules:
       [req.user.id, `${subtopicInfo.subtopic} — ${subtopicInfo.subject}`, subtopicInfo.subject_id, subtopicInfo.topic_id]
     );
 
-    for (const card of cards) {
-      if (!card.question || !card.answer) continue;
-      const fc = await db.one(
-        "INSERT INTO flashcards (deck_id, question, answer) VALUES ($1,$2,$3) RETURNING id",
-        [deck.id, card.question, card.answer]
+    const validCards = cards.filter(c => c.question && c.answer);
+    if (validCards.length) {
+      const fcRows = await db.many(
+        `INSERT INTO flashcards (deck_id, question, answer)
+         SELECT $1, q, a FROM unnest($2::text[], $3::text[]) AS t(q, a)
+         RETURNING id`,
+        [deck.id, validCards.map(c => c.question), validCards.map(c => c.answer)]
       );
       await db.query(
-        "INSERT INTO flashcard_progress (user_id, flashcard_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        [req.user.id, fc.id]
+        `INSERT INTO flashcard_progress (user_id, flashcard_id)
+         SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING`,
+        [req.user.id, fcRows.map(r => r.id)]
       );
     }
 

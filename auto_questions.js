@@ -93,21 +93,24 @@ Return ONLY a valid JSON array:
     }
 
     // Save questions to database
-    for (const q of questions) {
-      if (!q.question || !q.marks) continue;
+    const validQs = questions.filter(q => q.question && q.marks);
+    if (validQs.length) {
       await db.query(
-        `INSERT INTO lesson_questions 
+        `INSERT INTO lesson_questions
          (lesson_id, question, marks, grade, command_word, mark_scheme, model_answer, examiner_tip)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+         SELECT $1, q, m, g, cw, ms, ma, et FROM unnest(
+           $2::text[], $3::int[], $4::text[], $5::text[],
+           $6::text[], $7::text[], $8::text[]
+         ) AS t(q, m, g, cw, ms, ma, et)`,
         [
           lessonId,
-          q.question,
-          q.marks,
-          q.grade || "B",
-          q.command_word || null,
-          q.mark_scheme || null,
-          q.model_answer || null,
-          q.examiner_tip || null,
+          validQs.map(q => q.question),
+          validQs.map(q => q.marks),
+          validQs.map(q => q.grade || 'B'),
+          validQs.map(q => q.command_word || null),
+          validQs.map(q => q.mark_scheme || null),
+          validQs.map(q => q.model_answer || null),
+          validQs.map(q => q.examiner_tip || null),
         ]
       );
     }

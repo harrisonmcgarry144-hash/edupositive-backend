@@ -25,16 +25,15 @@ async function updateRanks() {
     const total = users.length;
     if (!total) return;
     const top100Ids = new Set(users.slice(0, Math.min(100, total)).map(u => u.id));
-    for (let i = 0; i < users.length; i++) {
-      const user = users[i];
+    const rankData = users.map((user, i) => {
       const percentile = total === 1 ? 50 : ((total - i - 1) / (total - 1)) * 100;
-      const rank = getRankFromPercentile(percentile);
-      const isTop100 = top100Ids.has(user.id);
-      await db.query(
-        "UPDATE users SET rank=$1, rank_percentile=$2, is_top100=$3 WHERE id=$4",
-        [rank.name, Math.round(percentile), isTop100, user.id]
-      );
-    }
+      return { id: user.id, rank: getRankFromPercentile(percentile).name, pct: Math.round(percentile), top: top100Ids.has(user.id) };
+    });
+    await db.query(
+      `UPDATE users u SET rank=v->>'rank', rank_percentile=(v->>'pct')::int, is_top100=(v->>'top')::boolean
+       FROM jsonb_array_elements($1::jsonb) AS v WHERE u.id=(v->>'id')::uuid`,
+      [JSON.stringify(rankData)]
+    );
     console.log(`[Ranks] Updated ${total} users`);
   } catch (e) { console.error("[Ranks] Error:", e.message); }
 }

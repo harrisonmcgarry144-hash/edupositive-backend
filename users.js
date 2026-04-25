@@ -64,10 +64,11 @@ router.put("/me/subjects", authenticate, async (req, res, next) => {
   try {
     const { subjectIds } = req.body;
     await db.query("DELETE FROM user_subjects WHERE user_id=$1", [req.user.id]);
-    for (const sid of (subjectIds || [])) {
+    if (subjectIds?.length) {
       await db.query(
-        "INSERT INTO user_subjects (user_id, subject_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        [req.user.id, sid]
+        `INSERT INTO user_subjects (user_id, subject_id)
+         SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING`,
+        [req.user.id, subjectIds]
       );
     }
     res.json({ message: "Subjects updated" });

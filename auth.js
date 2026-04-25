@@ -128,7 +128,7 @@ router.post("/reset-password", limiter, async (req, res, next) => {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: "Token and password required" });
     if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
-    const user = await db.one("SELECT id FROM users WHERE reset_token=$1 AND reset_expires > NOW()", [token]);
+    const user = await db.oneOrNone("SELECT id FROM users WHERE reset_token=$1 AND reset_expires > NOW()", [token]);
     if (!user) return res.status(400).json({ error: "Invalid or expired reset link" });
     await db.query("UPDATE users SET password_hash=$1, reset_token=NULL, reset_expires=NULL, token_version=COALESCE(token_version,0)+1 WHERE id=$2", [await bcrypt.hash(password, 12), user.id]);
     res.json({ message: "Password reset successfully. Please log in again." });
@@ -141,9 +141,12 @@ router.post("/onboarding", authenticate, async (req, res, next) => {
     await db.query("UPDATE users SET level_type=$1, career_goal=$2, subject_customisations=$3 WHERE id=$4", [levelType || 'a-level', careerGoal || null, customisations ? JSON.stringify(customisations) : null, req.user.id]);
     if (subjectIds?.length) {
       await db.query("DELETE FROM user_subjects WHERE user_id=$1", [req.user.id]);
-      for (const sid of subjectIds) {
-        await db.query("INSERT INTO user_subjects (user_id, subject_id, exam_board) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [req.user.id, sid, boardSelections?.[sid] || 'AQA']);
-      }
+      const boards = subjectIds.map(sid => boardSelections?.[sid] || 'AQA');
+      await db.query(
+        `INSERT INTO user_subjects (user_id, subject_id, exam_board)
+         SELECT $1, unnest($2::int[]), unnest($3::text[]) ON CONFLICT DO NOTHING`,
+        [req.user.id, subjectIds, boards]
+      );
     }
     res.json({ message: "Onboarding complete" });
   } catch (err) { next(err); }
