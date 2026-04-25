@@ -1,10 +1,14 @@
 // gemini_client.js - Drop-in AI client using Google Gemini
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+function getClient() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error('GEMINI_API_KEY environment variable is not configured');
+  return new GoogleGenerativeAI(key);
+}
 
 async function callAI(systemPrompt, userPrompt, maxTokens = 2000) {
-  const model = genAI.getGenerativeModel({
+  const model = getClient().getGenerativeModel({
     model: "gemini-2.0-flash",
     systemInstruction: systemPrompt,
     generationConfig: {
@@ -18,7 +22,7 @@ async function callAI(systemPrompt, userPrompt, maxTokens = 2000) {
 
 // For the ai.js chat interface which passes messages array
 async function callChat(systemPrompt, messages, maxTokens = 1500) {
-  const model = genAI.getGenerativeModel({
+  const model = getClient().getGenerativeModel({
     model: "gemini-2.0-flash",
     systemInstruction: systemPrompt,
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },

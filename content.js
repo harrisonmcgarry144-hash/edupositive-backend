@@ -42,30 +42,51 @@ router.get("/topics/:id/subtopics", optionalAuth, async (req, res, next) => {
 
 router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
   try {
-    // Return lessons for any exam board - show AQA as fallback if user's board not available
-    const { board } = req.query;
+    let board = req.query.board || null;
+    const userId = req.user?.id || null;
+
+    // Authenticated with no explicit board: look up the user's exam board for this subtopic.
+    // Returning only board-specific lessons means an empty response correctly signals the
+    // frontend to trigger generation rather than showing content from the wrong board.
+    if (userId && !board) {
+      const boardRow = await db.one(
+        `SELECT us.exam_board FROM user_subjects us
+         JOIN subjects s ON s.id = us.subject_id
+         JOIN topics t ON t.subject_id = s.id
+         JOIN subtopics st ON st.topic_id = t.id
+         WHERE st.id = $1 AND us.user_id = $2 LIMIT 1`,
+        [req.params.id, userId]
+      );
+      board = boardRow?.exam_board || null;
+    }
+
     let lessons;
-    if (board) {
-      // Try user's board first, fall back to AQA
+    if (board && userId) {
+      // Board-specific lessons with per-user completion status
       lessons = await db.manyOrNone(
-        `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
-         WHERE subtopic_id=$1 AND is_published=true AND exam_board=$2 ORDER BY created_at`,
+        `SELECT l.id, l.title, l.summary, l.keywords, l.exam_board, l.created_at,
+                (lc.id IS NOT NULL) AS completed
+         FROM lessons l
+         LEFT JOIN lesson_completions lc ON lc.lesson_id = l.id AND lc.user_id = $3
+         WHERE l.subtopic_id = $1 AND l.is_published = true AND l.exam_board = $2
+         ORDER BY l.created_at`,
+        [req.params.id, board, userId]
+      );
+    } else if (board) {
+      lessons = await db.manyOrNone(
+        `SELECT id, title, summary, keywords, exam_board, created_at, false AS completed
+         FROM lessons WHERE subtopic_id=$1 AND is_published=true AND exam_board=$2 ORDER BY created_at`,
         [req.params.id, board]
       );
-      if (lessons.length === 0) {
-        lessons = await db.manyOrNone(
-          `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
-           WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
-          [req.params.id]
-        );
-      }
     } else {
       lessons = await db.manyOrNone(
-        `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
-         WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
+        `SELECT id, title, summary, keywords, exam_board, created_at, false AS completed
+         FROM lessons WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
         [req.params.id]
       );
     }
+
+    res.setHeader('Cache-Control', 'no-store');
     res.json(lessons);
   } catch (err) { next(err); }
 });
