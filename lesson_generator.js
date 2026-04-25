@@ -27,15 +27,19 @@ async function waitForRateLimit() {
   _requestTimestamps.push(Date.now());
 }
 
-async function callAIWithRetry(system, prompt, maxTokens, retries = 10) {
+async function callAIWithRetry(system, prompt, maxTokens, retries = 2) {
   await waitForRateLimit();
-  let delay = 30000;
+  let delay = 60000;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await callAI(system, prompt, maxTokens);
     } catch (e) {
       const is429 = e.message?.includes('429') || e.status === 429;
       if (is429) {
+        if (attempt === retries - 1) {
+          // Don't keep burning quota — surface a quota error so caller can stop for the day
+          throw new Error('QUOTA_EXHAUSTED');
+        }
         console.log(`[LessonGen] 429 received. Waiting ${delay / 1000}s (attempt ${attempt + 1}/${retries})...`);
         await new Promise(r => setTimeout(r, delay));
         delay = Math.min(delay * 2, 120000);

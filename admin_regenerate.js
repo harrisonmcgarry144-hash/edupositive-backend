@@ -76,14 +76,20 @@ async function runRegeneration() {
       regenProgress.todayCount = currentUsage;
 
       // Run batch in parallel
+      let quotaExhausted = false;
       await Promise.all(batch.map(async (sub) => {
         try {
           const before = await countLessons(sub.subtopic_id, sub.exam_board);
           const result = await generateLessonsForSubtopic(sub.subtopic_id, sub.exam_board);
           if (result.error) {
-            console.error(`[Regen] Failed ${sub.subtopic_name}:`, result.error);
-            regenProgress.errors++;
-            regenProgress.lastError = `${sub.subtopic_name}: ${result.error}`;
+            if (result.error === 'QUOTA_EXHAUSTED') {
+              quotaExhausted = true;
+              console.log('[Regen] Gemini daily quota exhausted. Stopping until tomorrow.');
+            } else {
+              console.error(`[Regen] Failed ${sub.subtopic_name}:`, result.error);
+              regenProgress.errors++;
+              regenProgress.lastError = `${sub.subtopic_name}: ${result.error}`;
+            }
           } else if (!result.skipped) {
             const after = await countLessons(sub.subtopic_id, sub.exam_board);
             const newLessons = after - before;
@@ -96,6 +102,10 @@ async function runRegeneration() {
         }
         regenProgress.done++;
       }));
+      if (quotaExhausted) {
+        regenProgress.current = 'Gemini quota exhausted. Will resume tomorrow.';
+        break;
+      }
     }
 
     regenProgress.current = regenProgress.done >= regenProgress.total ? 'Complete!' : 'Paused for today';
@@ -128,11 +138,11 @@ router.get("/regenerate-status", authenticate, async (req, res) => {
   res.json({ isRegenerating, progress: { ...regenProgress, todayCount: todayUsed, dailyLimit: DAILY_LIMIT } });
 });
 
-// Auto-resume 30s after startup
+// Auto-resume 90s after startup — gives Gemini's 60s RPM window time to clear
 setTimeout(() => {
   console.log("[Regen] Auto-resuming...");
   runRegeneration().catch(e => console.error("Auto-regen crashed:", e));
-}, 30000);
+}, 90000);
 
 // Hourly check
 setInterval(() => {
