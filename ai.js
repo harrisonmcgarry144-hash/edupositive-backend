@@ -18,6 +18,7 @@ const MODES = {
 
 async function callClaude(system, messages, maxTokens = 1000) {
   const Groq = require('groq-sdk');
+  if (!process.env.GROQ_API_KEY) throw new Error("Groq AI not configured");
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
   const groqMessages = [
     { role: "system", content: system },

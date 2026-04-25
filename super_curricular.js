@@ -3,7 +3,10 @@ const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const { hasPremium } = require('./payments');
 const Groq = require('groq-sdk');
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+let groq;
+if (process.env.GROQ_API_KEY) {
+  groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+}
 
 async function requirePremium(req, res, next) {
   const ok = await hasPremium(req.user.id).catch(() => false);
@@ -49,6 +52,7 @@ const ACTIVITIES = {
 // POST /api/supercurricular/generate
 router.post("/generate", authenticate, requirePremium, async (req, res, next) => {
   try {
+    if (!groq) return res.status(503).json({ error: "AI disabled" });
     const { activity, subjects, careerGoal } = req.body;
     if (!activity) return res.status(400).json({ error: "activity required" });
 

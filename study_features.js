@@ -3,10 +3,14 @@ const { awardXP } = require('./gamification');
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const Groq = require('groq-sdk');
+let groq;
+if (process.env.GROQ_API_KEY) {
+  groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+}
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 async function callGroq(system, user, maxTokens = 1000, model = "llama-3.3-70b-versatile") {
+  if (!groq) throw new Error("AI service disabled");
   const res = await groq.chat.completions.create({
     model, max_tokens: maxTokens,
     messages: [{ role: "system", content: system }, { role: "user", content: user }],

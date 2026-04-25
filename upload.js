@@ -4,11 +4,15 @@ const cloudinary = require("cloudinary").v2;
 const db         = require('./index');
 const { authenticate } = require('./authmiddleware');
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key:    process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+} else {
+  console.warn('[Upload] Cloudinary credentials missing.');
+}
 
 const storage = multer.memoryStorage();
 const upload  = multer({
@@ -57,6 +61,7 @@ router.post("/handwriting", authenticate, upload.single("image"), async (req, re
     });
 
     const { GoogleGenerativeAI } = require('@google/generative-ai');
+    if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini AI not configured" });
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 

@@ -3,7 +3,10 @@ const router = require("express").Router();
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const Stripe = require('stripe');
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+let stripe;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+}
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: "Admin only" });
@@ -13,6 +16,7 @@ function requireAdmin(req, res, next) {
 // GET /api/admin/revenue — total revenue, 33% tax set-aside, net
 router.get("/revenue", authenticate, requireAdmin, async (req, res, next) => {
   try {
+    if (!stripe) return res.status(503).json({ error: "Payments disabled" });
     // Get all successful charges from Stripe
     let totalGross = 0;
     let totalFees = 0;

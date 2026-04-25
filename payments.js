@@ -2,7 +2,12 @@ const router = require("express").Router();
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
 const Stripe = require('stripe');
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+let stripe;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+} else {
+  console.warn('[Payments] STRIPE_SECRET_KEY missing. Payment features will be disabled.');
+}
 
 const PRICE_ID = process.env.STRIPE_PRICE_ID;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
@@ -46,6 +51,7 @@ router.get("/status", authenticate, async (req, res, next) => {
 // POST /api/payments/create-checkout — start Stripe checkout
 router.post("/create-checkout", authenticate, async (req, res, next) => {
   try {
+    if (!stripe) return res.status(503).json({ error: "Payments disabled" });
     const user = await db.one("SELECT * FROM users WHERE id=$1", [req.user.id]);
 
     let customerId = user.stripe_customer_id;
@@ -76,6 +82,7 @@ router.post("/create-checkout", authenticate, async (req, res, next) => {
 // POST /api/payments/cancel — cancel subscription
 router.post("/cancel", authenticate, async (req, res, next) => {
   try {
+    if (!stripe) return res.status(503).json({ error: "Payments disabled" });
     const user = await db.one("SELECT stripe_customer_id, stripe_subscription_id FROM users WHERE id=$1", [req.user.id]);
     if (!user.stripe_subscription_id) return res.status(400).json({ error: "No active subscription" });
 
@@ -89,6 +96,7 @@ router.post("/cancel", authenticate, async (req, res, next) => {
 
 // POST /api/payments/webhook — Stripe webhook
 router.post("/webhook", require('express').raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: "Payments disabled" });
   const sig = req.headers['stripe-signature'];
   let event;
 

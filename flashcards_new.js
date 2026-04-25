@@ -244,6 +244,7 @@ Rules:
 - No bullet points in answers - write in plain sentences`;
 
     const GroqSDK = require('groq-sdk');
+    if (!process.env.GROQ_API_KEY) return res.status(503).json({ error: "Groq AI not configured" });
     const groqClient = new GroqSDK({ apiKey: process.env.GROQ_API_KEY });
     const completion = await groqClient.chat.completions.create({
       model: "llama-3.1-8b-instant",

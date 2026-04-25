@@ -1,5 +1,10 @@
 const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend;
+if (process.env.RESEND_API_KEY) {
+  resend = new Resend(process.env.RESEND_API_KEY);
+} else {
+  console.warn('[Email] RESEND_API_KEY missing. Email features will be disabled.');
+}
 
 const BASE = process.env.CLIENT_URL || "http://localhost:3000";
 const FROM = "EduPositive <noreply@edupositive.xyz>";
@@ -36,6 +41,10 @@ const note = (t) =>
 
 async function send(to, subject, html) {
   try {
+    if (!resend) {
+      console.log(`[Email] Mock send to ${to}: ${subject}`);
+      return;
+    }
     await resend.emails.send({ from: FROM, to, subject, html });
   } catch(e) {
     console.error("Email failed:", e.message);

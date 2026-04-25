@@ -141,12 +141,26 @@ async function generateLessonsForSubject(subjectId, board, progressCallback) {
      WHERE t.subject_id = $1`,
     [subjectId]
   );
+<<<<<<< HEAD
+  const total = subtopics.length;
+  let done = 0;
+  for (const sub of subtopics) {
+    const res = await generateLessonsForSubtopic(sub.id, board);
+    if (res.error) {
+      console.error(`[LessonGen] Error for subtopic ${sub.id}:`, res.error);
+    } else if (res.skipped) {
+      // console.log(`[LessonGen] Skipped subtopic ${sub.id} (already exists)`);
+    } else {
+      console.log(`[LessonGen] Generated ${res.total} lessons for subtopic ${sub.id}`);
+    }
+=======
 
   const total = subtopics.length;
   let done = 0;
 
   for (const sub of subtopics) {
     await generateLessonsForSubtopic(sub.id, board);
+>>>>>>> 80715a00f6f12d35f67cb7d4fc2998f1855b5d25
     done++;
     if (progressCallback) progressCallback(done, total);
   }

@@ -134,7 +134,9 @@ router.post("/lessons/:id/paragraph-quiz", authenticate, async (req, res, next) 
     if (!paragraph?.trim()) return res.status(400).json({ error: "paragraph required" });
 
     const Groq = require('groq-sdk');
+    if (!process.env.GROQ_API_KEY) return res.status(503).json({ error: "Groq AI not configured" });
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    if (!groq) return res.status(503).json({ error: "Groq AI not configured" });
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
