@@ -44,7 +44,7 @@ async function runRegeneration() {
 
     const subtopics = await db.many(
       `SELECT st.id AS subtopic_id, s.name AS subject_name, st.name AS subtopic_name,
-              COALESCE(s.exam_boards[1], 'AQA') AS exam_board,
+              'AQA' AS exam_board,
               EXISTS (SELECT 1 FROM lessons l WHERE l.subtopic_id = st.id) AS already_done
        FROM subtopics st
        JOIN topics t ON t.id = st.topic_id
