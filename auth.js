@@ -18,7 +18,7 @@ router.post("/register", limiter, async (req, res, next) => {
     if (!rawEmail || !password || !username) return res.status(400).json({ error: "Email, password and username are required" });
     if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
     if (!/[0-9]/.test(password) && !/[^a-zA-Z0-9]/.test(password)) return res.status(400).json({ error: "Password must contain at least one number or special character" });
-    const exists = await db.one("SELECT id FROM users WHERE email=$1 OR username=$2", [rawEmail.toLowerCase(), username]);
+    const exists = await db.oneOrNone("SELECT id FROM users WHERE email=$1 OR username=$2", [rawEmail.toLowerCase(), username]);
     if (exists) return res.status(409).json({ error: "An account with those details already exists" });
     const hash = await bcrypt.hash(password, 12);
     const code = generateCode();
@@ -68,7 +68,7 @@ router.post("/login", limiter, async (req, res, next) => {
     const { email: rawEmail, username: rawUsername, password } = req.body;
     const identifier = (rawUsername || rawEmail || "").toLowerCase().trim();
     if (!identifier || !password) return res.status(400).json({ error: "Email or username and password required" });
-    const user = await db.one("SELECT * FROM users WHERE username=$1 OR email=$1", [identifier]);
+    const user = await db.oneOrNone("SELECT * FROM users WHERE username=$1 OR email=$1", [identifier]);
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
     const lockoutUntil = user.lockout_until ? new Date(user.lockout_until) : null;
     if (lockoutUntil && lockoutUntil > new Date()) {
@@ -112,7 +112,7 @@ router.post("/logout-all", authenticate, async (req, res, next) => {
 
 router.post("/forgot-password", limiter, async (req, res, next) => {
   try {
-    const user = await db.one("SELECT id FROM users WHERE email=$1", [req.body.email?.toLowerCase()]);
+    const user = await db.oneOrNone("SELECT id FROM users WHERE email=$1", [req.body.email?.toLowerCase()]);
     if (user) {
       const token = crypto.randomBytes(32).toString("hex");
       const expires = new Date(Date.now() + 60 * 60 * 1000);
@@ -171,7 +171,7 @@ router.delete("/account", authenticate, async (req, res, next) => {
 router.get("/me", authenticate, async (req, res, next) => {
   try {
     const user = await db.one("SELECT id, email, username, full_name, avatar_url, bio, role, level_type, career_goal, school, is_public, is_verified, xp, level, streak, longest_streak, created_at FROM users WHERE id=$1", [req.user.id]);
-    const subjects = await db.many("SELECT s.*, us.exam_board FROM subjects s JOIN user_subjects us ON us.subject_id=s.id WHERE us.user_id=$1", [req.user.id]);
+    const subjects = await db.manyOrNone("SELECT s.*, us.exam_board FROM subjects s JOIN user_subjects us ON us.subject_id=s.id WHERE us.user_id=$1", [req.user.id]);
     res.json({ ...user, subjects });
   } catch (err) { next(err); }
 });
