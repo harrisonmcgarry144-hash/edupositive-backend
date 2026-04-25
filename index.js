@@ -13,6 +13,7 @@ pool.on("error", (err) => console.error("Unexpected PG pool error:", err));
 const db = {
   query:       (text, params) => pool.query(text, params),
   one:         async (text, params) => { const { rows } = await pool.query(text, params); return rows[0] || null; },
+  oneOrNone:   async (text, params) => { const { rows } = await pool.query(text, params); return rows[0] || null; },
   many:        async (text, params) => { const { rows } = await pool.query(text, params); return rows; },
   manyOrNone:  async (text, params) => { const { rows } = await pool.query(text, params); return rows; },
   transaction: async (fn) => {
