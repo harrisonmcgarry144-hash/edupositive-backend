@@ -4,7 +4,7 @@ const { authenticate } = require('./authmiddleware');
 const { generateLessonsForSubtopic } = require('./lesson_generator');
 
 const DAILY_LIMIT = 1500;
-const CONCURRENCY = 3; // Generate 3 subtopics at a time
+const CONCURRENCY = 1; // One subtopic at a time to avoid Gemini rate limits
 
 let isRegenerating = false;
 let regenProgress = { done: 0, total: 0, current: '', errors: 0, todayCount: 0, dailyLimit: DAILY_LIMIT };

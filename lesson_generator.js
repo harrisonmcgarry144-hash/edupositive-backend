@@ -13,8 +13,8 @@ CRITICAL WRITING RULES:
 - Each paragraph should be 2-4 sentences maximum. Keep it digestible.`;
 
 // Retry with aggressive backoff only on actual 429s
-async function callAIWithRetry(system, prompt, maxTokens, retries = 3) {
-  let delay = 2000;
+async function callAIWithRetry(system, prompt, maxTokens, retries = 5) {
+  let delay = 10000;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await callAI(system, prompt, maxTokens);
@@ -23,11 +23,11 @@ async function callAIWithRetry(system, prompt, maxTokens, retries = 3) {
       if (is429) {
         console.log(`[LessonGen] Rate limited. Waiting ${delay/1000}s...`);
         await new Promise(r => setTimeout(r, delay));
-        delay = Math.min(delay * 1.5, 30000);
+        delay = Math.min(delay * 2, 60000);
       } else if (attempt === retries - 1) {
         throw e;
       } else {
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
   }
@@ -86,17 +86,18 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
   try {
     const titles = await planLessons(sub.subject, sub.topic, sub.subtopic, examBoard);
 
-    // Generate ALL lessons in PARALLEL (much faster)
-    const lessonPromises = titles.map((title, i) =>
-      generateMiniLesson(sub.subject, sub.topic, sub.subtopic, title, examBoard, i, titles.length)
-        .then(content => ({ title, content, i }))
-        .catch(err => {
-          console.error(`[LessonGen] Failed lesson "${title}":`, err.message);
-          return null;
-        })
-    );
-
-    const results = await Promise.all(lessonPromises);
+    // Generate lessons sequentially to stay within Gemini rate limits
+    const results = [];
+    for (let i = 0; i < titles.length; i++) {
+      try {
+        const content = await generateMiniLesson(sub.subject, sub.topic, sub.subtopic, titles[i], examBoard, i, titles.length);
+        results.push({ title: titles[i], content, i });
+      } catch (err) {
+        console.error(`[LessonGen] Failed lesson "${titles[i]}":`, err.message);
+        results.push(null);
+      }
+      if (i < titles.length - 1) await new Promise(r => setTimeout(r, 1500));
+    }
 
     // Insert all lessons
     for (const r of results) {
