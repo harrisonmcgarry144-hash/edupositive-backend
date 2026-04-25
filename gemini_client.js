@@ -17,6 +17,8 @@ async function callAI(systemPrompt, userPrompt, maxTokens = 2000) {
     },
   });
   const result = await model.generateContent(userPrompt);
+  const blocked = result.response.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`Gemini blocked content: ${blocked}`);
   return result.response.text();
 }
 

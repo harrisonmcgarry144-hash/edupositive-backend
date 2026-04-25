@@ -58,7 +58,7 @@ async function runRegeneration() {
     const todo = subtopics.filter(s => !s.already_done);
     const todayUsed = await getTodayUsage();
 
-    regenProgress = { done: subtopics.length - todo.length, total: subtopics.length, current: '', errors: 0, todayCount: todayUsed, dailyLimit: DAILY_LIMIT };
+    regenProgress = { done: subtopics.length - todo.length, total: subtopics.length, current: '', errors: 0, todayCount: todayUsed, dailyLimit: DAILY_LIMIT, lastError: '' };
     console.log(`[Regen] Starting. ${todo.length} subtopics remaining. Today: ${todayUsed}/${DAILY_LIMIT}`);
 
     // Process in batches of CONCURRENCY
@@ -108,7 +108,9 @@ async function runRegeneration() {
       }
     }
 
-    regenProgress.current = regenProgress.done >= regenProgress.total ? 'Complete!' : 'Paused for today';
+    if (!regenProgress.current.includes('quota') && !regenProgress.current.includes('limit')) {
+      regenProgress.current = regenProgress.done >= regenProgress.total ? 'Complete!' : 'Paused for today';
+    }
   } catch(e) {
     console.error('[Regen] Critical error:', e.message);
   } finally {

@@ -113,6 +113,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
         const content = await generateMiniLesson(sub.subject, sub.topic, sub.subtopic, titles[i], examBoard, i, titles.length);
         results.push({ title: titles[i], content, i });
       } catch (err) {
+        if (err.message === 'QUOTA_EXHAUSTED') throw err; // propagate — don't waste more retries
         console.error(`[LessonGen] Failed lesson "${titles[i]}":`, err.message);
         results.push(null);
       }
