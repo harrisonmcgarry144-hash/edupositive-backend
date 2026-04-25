@@ -17,7 +17,7 @@ router.get("/subjects", optionalAuth, async (req, res, next) => {
 router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
   try {
     res.setHeader('Cache-Control', 'public, max-age=300');
-    const topics = await db.many(
+    const topics = await db.manyOrNone(
       `SELECT t.*,
          COALESCE(json_agg(
            json_build_object('id',s.id,'name',s.name,'slug',s.slug,'order_index',s.order_index)
@@ -35,7 +35,7 @@ router.get("/subjects/:id/topics", optionalAuth, async (req, res, next) => {
 
 router.get("/topics/:id/subtopics", optionalAuth, async (req, res, next) => {
   try {
-    const subtopics = await db.many("SELECT * FROM subtopics WHERE topic_id=$1 ORDER BY order_index", [req.params.id]);
+    const subtopics = await db.manyOrNone("SELECT * FROM subtopics WHERE topic_id=$1 ORDER BY order_index", [req.params.id]);
     res.json(subtopics);
   } catch (err) { next(err); }
 });
@@ -47,20 +47,20 @@ router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
     let lessons;
     if (board) {
       // Try user's board first, fall back to AQA
-      lessons = await db.many(
+      lessons = await db.manyOrNone(
         `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
          WHERE subtopic_id=$1 AND is_published=true AND exam_board=$2 ORDER BY created_at`,
         [req.params.id, board]
       );
       if (lessons.length === 0) {
-        lessons = await db.many(
+        lessons = await db.manyOrNone(
           `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
            WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
           [req.params.id]
         );
       }
     } else {
-      lessons = await db.many(
+      lessons = await db.manyOrNone(
         `SELECT id, title, summary, keywords, exam_board, created_at FROM lessons
          WHERE subtopic_id=$1 AND is_published=true ORDER BY created_at`,
         [req.params.id]
@@ -82,7 +82,7 @@ router.get("/lessons/:id", optionalAuth, async (req, res, next) => {
       [req.params.id]
     );
     if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-    const modelAnswers = await db.many("SELECT * FROM model_answers WHERE lesson_id=$1", [req.params.id]);
+    const modelAnswers = await db.manyOrNone("SELECT * FROM model_answers WHERE lesson_id=$1", [req.params.id]);
     if (req.user) {
       await db.query(`INSERT INTO memory_strength (user_id, subtopic_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [req.user.id, lesson.subtopic_id]);
       await require('./gamification').awardXP(req.user.id, 15, "lesson_read", lesson.id);
@@ -95,7 +95,7 @@ router.get("/subtopics/:id/mindmap", authenticate, async (req, res, next) => {
   try {
     const subtopic = await db.one("SELECT * FROM subtopics WHERE id=$1", [req.params.id]);
     if (!subtopic) return res.status(404).json({ error: "Subtopic not found" });
-    const lessons = await db.many("SELECT id, title, keywords, summary FROM lessons WHERE subtopic_id=$1 AND is_published=true", [req.params.id]);
+    const lessons = await db.manyOrNone("SELECT id, title, keywords, summary FROM lessons WHERE subtopic_id=$1 AND is_published=true", [req.params.id]);
     res.json({
       id: subtopic.id, label: subtopic.name,
       children: lessons.map(l => ({
@@ -140,7 +140,7 @@ router.post("/lessons/:id/complete", authenticate, async (req, res, next) => {
 
 router.get("/my-progress", authenticate, async (req, res, next) => {
   try {
-    const rows = await db.many(
+    const rows = await db.manyOrNone(
       `SELECT s.id AS subject_id, t.id AS topic_id, st.id AS subtopic_id,
               COUNT(l.id) AS total_lessons, COUNT(lc.id) AS completed_lessons
        FROM subjects s
@@ -244,7 +244,7 @@ router.post("/model-answers", authenticate, requireAdmin, async (req, res, next)
 
 router.get("/lessons/:id/versions", authenticate, requireAdmin, async (req, res, next) => {
   try {
-    const versions = await db.many("SELECT * FROM lesson_versions WHERE lesson_id=$1 ORDER BY version DESC", [req.params.id]);
+    const versions = await db.manyOrNone("SELECT * FROM lesson_versions WHERE lesson_id=$1 ORDER BY version DESC", [req.params.id]);
     res.json(versions);
   } catch (err) { next(err); }
 });

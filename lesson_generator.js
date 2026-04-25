@@ -115,4 +115,40 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
   }
 }
 
-module.exports = { generateLessonsForSubtopic };
+async function getGenerationProgress(subjectId, board) {
+  const totalRow = await db.one(
+    `SELECT COUNT(st.id)::int AS count
+     FROM subtopics st JOIN topics t ON t.id = st.topic_id
+     WHERE t.subject_id = $1`,
+    [subjectId]
+  );
+  const doneRow = await db.one(
+    `SELECT COUNT(DISTINCT l.subtopic_id)::int AS count
+     FROM lessons l
+     JOIN subtopics st ON st.id = l.subtopic_id
+     JOIN topics t ON t.id = st.topic_id
+     WHERE t.subject_id = $1 AND l.exam_board = $2 AND l.is_published = true`,
+    [subjectId, board]
+  );
+  return { done: doneRow.count, total: totalRow.count };
+}
+
+async function generateLessonsForSubject(subjectId, board, progressCallback) {
+  const subtopics = await db.manyOrNone(
+    `SELECT st.id FROM subtopics st
+     JOIN topics t ON t.id = st.topic_id
+     WHERE t.subject_id = $1`,
+    [subjectId]
+  );
+
+  const total = subtopics.length;
+  let done = 0;
+
+  for (const sub of subtopics) {
+    await generateLessonsForSubtopic(sub.id, board);
+    done++;
+    if (progressCallback) progressCallback(done, total);
+  }
+}
+
+module.exports = { generateLessonsForSubtopic, generateLessonsForSubject, getGenerationProgress };

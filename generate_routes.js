@@ -66,7 +66,7 @@ router.post("/start/:subjectId/:board", authenticate, async (req, res, next) => 
 // GET /api/generate/user-subjects-status — check all user's subjects
 router.get("/user-subjects-status", authenticate, async (req, res, next) => {
   try {
-    const userSubjects = await db.many(
+    const userSubjects = await db.manyOrNone(
       `SELECT s.id, s.name, us.exam_board
        FROM user_subjects us
        JOIN subjects s ON s.id = us.subject_id
