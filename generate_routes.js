@@ -1,7 +1,7 @@
 const router = require("express").Router();
 const db = require('./index');
 const { authenticate } = require('./authmiddleware');
-const { generateLessonsForSubject, isSubjectGenerated, getGenerationProgress } = require('./lesson_generator');
+const { generateLessonsForSubtopic, generateLessonsForSubject, isSubjectGenerated, getGenerationProgress } = require('./lesson_generator');
 
 // Track active generation jobs
 const activeJobs = new Map(); // subjectId+board -> { progress, total, status }
@@ -93,6 +93,42 @@ router.get("/user-subjects-status", authenticate, async (req, res, next) => {
     }));
 
     res.json(statuses);
+  } catch (err) { next(err); }
+});
+
+// POST /api/generate/subtopic/:subtopicId — generate lessons for one subtopic
+router.post("/subtopic/:subtopicId", authenticate, async (req, res, next) => {
+  try {
+    const { subtopicId } = req.params;
+    const key = `subtopic:${subtopicId}`;
+
+    if (activeJobs.get(key)?.status === 'running') {
+      return res.json({ status: 'running' });
+    }
+
+    // Look up the user's exam board for the subject containing this subtopic
+    const row = await db.one(
+      `SELECT us.exam_board FROM user_subjects us
+       JOIN subjects s ON s.id = us.subject_id
+       JOIN topics t ON t.subject_id = s.id
+       JOIN subtopics st ON st.topic_id = t.id
+       WHERE st.id = $1 AND us.user_id = $2
+       LIMIT 1`,
+      [subtopicId, req.user.id]
+    );
+    const board = row?.exam_board || 'AQA';
+
+    activeJobs.set(key, { status: 'running' });
+
+    generateLessonsForSubtopic(subtopicId, board)
+      .then(() => activeJobs.set(key, { status: 'complete' }))
+      .catch(e => {
+        console.error(`[SubtopicGen] Failed ${subtopicId}:`, e.message);
+        activeJobs.set(key, { status: 'error' });
+      })
+      .finally(() => setTimeout(() => activeJobs.delete(key), 60000));
+
+    res.json({ status: 'generating', board });
   } catch (err) { next(err); }
 });
 
