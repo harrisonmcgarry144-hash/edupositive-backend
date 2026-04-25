@@ -24,12 +24,11 @@ async function sendDailyRevisionEmails() {
 
   try {
     // Get all verified users who haven't opted out
-    const users = await db.many(
+    const users = await db.manyOrNone(
       `SELECT id, email, username, full_name, streak, xp, level
        FROM users
        WHERE is_verified = true
-       ORDER BY created_at`,
-      []
+       ORDER BY created_at`
     );
 
     console.log(`[DailyEmail] Sending to ${users.length} users`);

@@ -69,7 +69,7 @@ router.get("/", authenticate, async (req, res, next) => {
 // GET /api/classes/:id — get class details
 router.get("/:id", authenticate, async (req, res, next) => {
   try {
-    const cls = await db.one(
+    const cls = await db.oneOrNone(
       `SELECT c.*, s.name AS subject_name, u.username AS teacher_name
        FROM classes c
        LEFT JOIN subjects s ON s.id=c.subject_id
@@ -79,30 +79,31 @@ router.get("/:id", authenticate, async (req, res, next) => {
     );
     if (!cls) return res.status(404).json({ error: "Class not found" });
 
-    const members = await db.many(
-      `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url,
-              COUNT(ac.id)::int AS completed_assignments
-       FROM class_members cm
-       JOIN users u ON u.id=cm.user_id
-       LEFT JOIN assignment_completions ac ON ac.user_id=u.id
-         AND ac.assignment_id IN (SELECT id FROM assignments WHERE class_id=$1)
-       WHERE cm.class_id=$1
-       GROUP BY u.id
-       ORDER BY u.xp DESC`,
-      [req.params.id]
-    );
-
-    const assignments = await db.many(
-      `SELECT a.*,
-              COUNT(ac.id)::int AS completed_count,
-              (SELECT COUNT(*) FROM class_members WHERE class_id=$1)::int AS total_students
-       FROM assignments a
-       LEFT JOIN assignment_completions ac ON ac.assignment_id=a.id
-       WHERE a.class_id=$1
-       GROUP BY a.id
-       ORDER BY a.created_at DESC`,
-      [req.params.id]
-    );
+    const [members, assignments] = await Promise.all([
+      db.manyOrNone(
+        `SELECT u.id, u.username, u.xp, u.level, u.streak, u.avatar_url,
+                COUNT(ac.id)::int AS completed_assignments
+         FROM class_members cm
+         JOIN users u ON u.id=cm.user_id
+         LEFT JOIN assignment_completions ac ON ac.user_id=u.id
+           AND ac.assignment_id IN (SELECT id FROM assignments WHERE class_id=$1)
+         WHERE cm.class_id=$1
+         GROUP BY u.id
+         ORDER BY u.xp DESC`,
+        [req.params.id]
+      ),
+      db.manyOrNone(
+        `SELECT a.*,
+                COUNT(ac.id)::int AS completed_count,
+                (SELECT COUNT(*) FROM class_members WHERE class_id=$1)::int AS total_students
+         FROM assignments a
+         LEFT JOIN assignment_completions ac ON ac.assignment_id=a.id
+         WHERE a.class_id=$1
+         GROUP BY a.id
+         ORDER BY a.created_at DESC`,
+        [req.params.id]
+      ),
+    ]);
 
     res.json({ ...cls, members, assignments });
   } catch (err) { next(err); }

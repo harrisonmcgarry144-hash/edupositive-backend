@@ -107,7 +107,7 @@ router.post("/subtopic/:subtopicId", authenticate, async (req, res, next) => {
     }
 
     // Look up the user's exam board for the subject containing this subtopic
-    const row = await db.one(
+    const row = await db.oneOrNone(
       `SELECT us.exam_board FROM user_subjects us
        JOIN subjects s ON s.id = us.subject_id
        JOIN topics t ON t.subject_id = s.id

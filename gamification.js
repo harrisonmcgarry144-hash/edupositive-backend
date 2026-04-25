@@ -62,7 +62,7 @@ async function awardXP(userId, amountOrKey, reason, refId) {
     ).catch(() => {});
 
     const user = await db.one(
-      "UPDATE users SET xp=xp+$1 WHERE id=$2 RETURNING xp, level",
+      "UPDATE users SET xp=xp+$1 WHERE id=$2 RETURNING xp, level, streak",
       [amount, userId]
     );
 
@@ -72,12 +72,11 @@ async function awardXP(userId, amountOrKey, reason, refId) {
     }
 
     // Streak milestone bonuses
-    const streakUser = await db.one("SELECT streak FROM users WHERE id=$1", [userId]).catch(() => null);
-    if (streakUser) {
-      const s = streakUser.streak;
+    if (user.streak) {
+      const s = user.streak;
       const milestoneKey = s === 3 ? 'streak_3' : s === 7 ? 'streak_7' : s === 14 ? 'streak_14' : s === 30 ? 'streak_30' : s === 100 ? 'streak_100' : null;
       if (milestoneKey) {
-        const already = await db.one(
+        const already = await db.oneOrNone(
           "SELECT COUNT(*)::int AS count FROM xp_events WHERE user_id=$1 AND reason=$2 AND created_at > NOW() - INTERVAL '25 hours'",
           [userId, milestoneKey]
         ).catch(() => ({ count: 1 }));

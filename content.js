@@ -49,7 +49,7 @@ router.get("/subtopics/:id/lessons", optionalAuth, async (req, res, next) => {
     // Returning only board-specific lessons means an empty response correctly signals the
     // frontend to trigger generation rather than showing content from the wrong board.
     if (userId && !board) {
-      const boardRow = await db.one(
+      const boardRow = await db.oneOrNone(
         `SELECT us.exam_board FROM user_subjects us
          JOIN subjects s ON s.id = us.subject_id
          JOIN topics t ON t.subject_id = s.id

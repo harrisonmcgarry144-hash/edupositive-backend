@@ -6,7 +6,7 @@ const authenticate = async (req, res, next) => {
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "No token provided" });
     const payload = jwt.verify(header.slice(7), process.env.JWT_SECRET);
-    const user = await db.one(
+    const user = await db.oneOrNone(
       "SELECT id, email, role, is_verified, xp, level, streak FROM users WHERE id = $1",
       [payload.sub]
     );
@@ -24,7 +24,7 @@ const optionalAuth = async (req, res, next) => {
     const header = req.headers.authorization;
     if (header?.startsWith("Bearer ")) {
       const payload = jwt.verify(header.slice(7), process.env.JWT_SECRET);
-      req.user = await db.one("SELECT id, email, role FROM users WHERE id = $1", [payload.sub]);
+      req.user = await db.oneOrNone("SELECT id, email, role FROM users WHERE id = $1", [payload.sub]);
     }
   } catch { /* ignore */ }
   next();
