@@ -19,20 +19,18 @@ function isSunday() {
 
 // Check if user has premium access (paid OR Sunday)
 async function hasPremium(userId) {
-  // Admins always have premium
-  try {
-    const user = await db.one("SELECT role FROM users WHERE id=$1", [userId]);
-    if (user.role === 'admin') return true;
-  } catch(e) {}
   if (isSunday()) return true;
-  const user = await db.oneOrNone("SELECT is_premium, premium_until FROM users WHERE id=$1", [userId]);
-  if (!user) return false;
-  if (!user.is_premium) return false;
-  if (user.premium_until && new Date(user.premium_until) < new Date()) {
-    await db.query("UPDATE users SET is_premium=false WHERE id=$1", [userId]);
-    return false;
-  }
-  return true;
+  try {
+    const user = await db.oneOrNone("SELECT role, is_premium, premium_until FROM users WHERE id=$1", [userId]);
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (!user.is_premium) return false;
+    if (user.premium_until && new Date(user.premium_until) < new Date()) {
+      await db.query("UPDATE users SET is_premium=false WHERE id=$1", [userId]);
+      return false;
+    }
+    return true;
+  } catch(e) { return false; }
 }
 
 // GET /api/payments/status — check premium status
@@ -113,19 +111,22 @@ router.post("/webhook", require('express').raw({ type: 'application/json' }), as
       const session = event.data.object;
       const userId = session.metadata.userId;
       const subscriptionId = session.subscription;
-      const until = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      // Use the actual subscription period end from Stripe, not a hardcoded +30 days
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      const until = new Date(sub.current_period_end * 1000);
 
       await db.query(
         "UPDATE users SET is_premium=true, premium_until=$1, stripe_subscription_id=$2 WHERE id=$3",
         [until, subscriptionId, userId]
       );
-      console.log(`[Stripe] Premium activated for user ${userId}`);
+      console.log(`[Stripe] Premium activated for user ${userId} until ${until.toISOString()}`);
     }
 
     if (event.type === 'invoice.payment_succeeded') {
       const invoice = event.data.object;
       const customerId = invoice.customer;
-      const until = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      // invoice.period_end is the Unix timestamp of the billing period end
+      const until = new Date(invoice.period_end * 1000);
       await db.query(
         "UPDATE users SET is_premium=true, premium_until=$1 WHERE stripe_customer_id=$2",
         [until, customerId]

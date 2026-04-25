@@ -15,7 +15,7 @@ router.get("/revising-now", async (req, res, next) => {
 // GET /api/users/:id
 router.get("/:id", authenticate, async (req, res, next) => {
   try {
-    const user = await db.one(`SELECT ${PUBLIC_FIELDS} FROM users WHERE id=$1`, [req.params.id]);
+    const user = await db.oneOrNone(`SELECT ${PUBLIC_FIELDS} FROM users WHERE id=$1`, [req.params.id]);
     if (!user) return res.status(404).json({ error: "User not found" });
     if (!user.is_public && user.id !== req.user.id && req.user.role !== "admin")
       return res.status(403).json({ error: "This profile is private" });
@@ -49,7 +49,7 @@ router.put("/me", authenticate, async (req, res, next) => {
 // GET /api/users/me/subjects
 router.get("/me/subjects", authenticate, async (req, res, next) => {
   try {
-    const subjects = await db.many(
+    const subjects = await db.manyOrNone(
       `SELECT s.* FROM subjects s
        INNER JOIN user_subjects us ON us.subject_id = s.id
        WHERE us.user_id = $1
@@ -79,7 +79,7 @@ router.put("/me/subjects", authenticate, async (req, res, next) => {
 router.get("/me/schedule", authenticate, async (req, res, next) => {
   try {
     const today = new Date().toISOString().slice(0,10);
-    const schedule = await db.many(
+    const schedule = await db.manyOrNone(
       `SELECT ss.*, st.name AS subtopic_name, t.name AS topic_name, s.name AS subject_name
        FROM study_schedule ss
        JOIN subtopics st ON st.id = ss.subtopic_id
@@ -109,7 +109,7 @@ router.post("/me/schedule/:id/complete", authenticate, async (req, res, next) =>
 // GET /api/users/me/notifications
 router.get("/me/notifications", authenticate, async (req, res, next) => {
   try {
-    const notifs = await db.many(
+    const notifs = await db.manyOrNone(
       "SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30",
       [req.user.id]
     );

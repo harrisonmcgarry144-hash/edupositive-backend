@@ -15,14 +15,14 @@ router.get("/", authenticate, async (req, res, next) => {
     if (subjectId) q += ` AND $${p.push(subjectId)}=ANY(tp.subject_ids)`;
     if (maxRate)   q += ` AND tp.hourly_rate<=$${p.push(maxRate)}`;
     q += " ORDER BY tp.rating DESC, tp.rating_count DESC";
-    res.json(await db.many(q, p));
+    res.json(await db.manyOrNone(q, p));
   } catch (err) { next(err); }
 });
 
 // GET /api/tutors/:id
 router.get("/:id", authenticate, async (req, res, next) => {
   try {
-    const tutor = await db.one(
+    const tutor = await db.oneOrNone(
       `SELECT tp.*, u.username, u.full_name, u.avatar_url, u.bio
        FROM tutor_profiles tp JOIN users u ON u.id=tp.user_id
        WHERE tp.id=$1`,
@@ -30,11 +30,11 @@ router.get("/:id", authenticate, async (req, res, next) => {
     );
     if (!tutor) return res.status(404).json({ error: "Tutor not found" });
 
-    const availability = await db.many(
+    const availability = await db.manyOrNone(
       "SELECT * FROM tutor_availability WHERE tutor_id=$1 ORDER BY day_of_week, start_time",
       [req.params.id]
     );
-    const reviews = await db.many(
+    const reviews = await db.manyOrNone(
       `SELECT ts.student_rating, ts.student_review, u.username, ts.created_at
        FROM tutor_sessions ts JOIN users u ON u.id=ts.student_id
        WHERE ts.tutor_id=$1 AND ts.student_rating IS NOT NULL
@@ -64,7 +64,7 @@ router.post("/profile", authenticate, async (req, res, next) => {
 // POST /api/tutors/:id/availability
 router.post("/:id/availability", authenticate, async (req, res, next) => {
   try {
-    const profile = await db.one("SELECT user_id FROM tutor_profiles WHERE id=$1", [req.params.id]);
+    const profile = await db.oneOrNone("SELECT user_id FROM tutor_profiles WHERE id=$1", [req.params.id]);
     if (!profile || profile.user_id !== req.user.id)
       return res.status(403).json({ error: "Not your profile" });
 
@@ -86,7 +86,7 @@ router.post("/:id/book", authenticate, async (req, res, next) => {
     const { scheduledAt, durationMins, notes } = req.body;
     if (!scheduledAt) return res.status(400).json({ error: "scheduledAt required" });
 
-    const tutor = await db.one("SELECT * FROM tutor_profiles WHERE id=$1 AND is_active=true", [req.params.id]);
+    const tutor = await db.oneOrNone("SELECT * FROM tutor_profiles WHERE id=$1 AND is_active=true", [req.params.id]);
     if (!tutor) return res.status(404).json({ error: "Tutor not found or inactive" });
 
     const session = await db.one(
@@ -96,7 +96,7 @@ router.post("/:id/book", authenticate, async (req, res, next) => {
        tutor.hourly_rate ? (tutor.hourly_rate * ((durationMins||60)/60)) : null, notes || null]
     );
     // Notify tutor
-    req.app.get("io").to(`user:${tutor.user_id}`).emit("session_booked", { session, studentId: req.user.id });
+    req.app.get("io")?.to(`user:${tutor.user_id}`).emit("session_booked", { session, studentId: req.user.id });
     res.status(201).json(session);
   } catch (err) { next(err); }
 });
@@ -127,7 +127,7 @@ router.post("/sessions/:id/review", authenticate, async (req, res, next) => {
   try {
     const { rating, review } = req.body;
     if (!rating || rating < 1 || rating > 5) return res.status(400).json({ error: "rating 1-5 required" });
-    const session = await db.one(
+    const session = await db.oneOrNone(
       "UPDATE tutor_sessions SET student_rating=$1, student_review=$2, status='completed' WHERE id=$3 AND student_id=$4 RETURNING tutor_id",
       [rating, review || null, req.params.id, req.user.id]
     );
@@ -155,9 +155,9 @@ router.put("/:id/verify", authenticate, requireAdmin, async (req, res, next) => 
 // GET /api/tutors/my/sessions — tutor sees their own sessions
 router.get("/my/sessions", authenticate, async (req, res, next) => {
   try {
-    const profile = await db.one("SELECT id FROM tutor_profiles WHERE user_id=$1", [req.user.id]);
+    const profile = await db.oneOrNone("SELECT id FROM tutor_profiles WHERE user_id=$1", [req.user.id]);
     if (!profile) return res.status(404).json({ error: "No tutor profile" });
-    const sessions = await db.many(
+    const sessions = await db.manyOrNone(
       `SELECT ts.*, u.username AS student_name, u.avatar_url AS student_avatar
        FROM tutor_sessions ts JOIN users u ON u.id=ts.student_id
        WHERE ts.tutor_id=$1 ORDER BY ts.scheduled_at DESC`,

@@ -16,10 +16,18 @@ const MODES = {
   exam:   "Give exam-focused, mark-scheme-aligned answers. Use precise terminology and structure your response as a model answer.",
 };
 
-async function callClaude(system, messages, maxTokens = 1000) {
+// Groq singleton — initialised once, reused across all requests
+let _groq = null;
+function getGroq() {
+  if (_groq) return _groq;
   const Groq = require('groq-sdk');
   if (!process.env.GROQ_API_KEY) throw new Error("Groq AI not configured");
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  _groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return _groq;
+}
+
+async function callClaude(system, messages, maxTokens = 1000) {
+  const groq = getGroq();
   const groqMessages = [
     { role: "system", content: system },
     ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: typeof m.content === 'string' ? m.content : (m.content[0]?.text || '') }))
@@ -45,7 +53,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
 
     // Load or create session
     let session = sessionId
-      ? await db.one("SELECT * FROM chat_sessions WHERE id=$1 AND user_id=$2", [sessionId, req.user.id])
+      ? await db.oneOrNone("SELECT * FROM chat_sessions WHERE id=$1 AND user_id=$2", [sessionId, req.user.id])
       : null;
     if (!session) {
       session = await db.one(
@@ -54,13 +62,13 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
       );
     }
 
-    const history = await db.many(
+    const history = await db.manyOrNone(
       "SELECT role, content FROM chat_messages WHERE session_id=$1 ORDER BY created_at DESC LIMIT 20",
       [session.id]
     );
 
     // Get user's subjects
-    const userSubjects = await db.many(
+    const userSubjects = await db.manyOrNone(
       `SELECT s.name FROM subjects s
        JOIN user_subjects us ON us.subject_id=s.id
        WHERE us.user_id=$1`,
@@ -71,7 +79,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
     // Search for relevant lesson content based on the message
     let lessonContext = "";
     try {
-      const relevantLessons = await db.many(
+      const relevantLessons = await db.manyOrNone(
         `SELECT l.title, l.content, l.summary, st.name AS subtopic, t.name AS topic, s.name AS subject
          FROM lessons l
          JOIN subtopics st ON st.id=l.subtopic_id
@@ -101,7 +109,7 @@ router.post("/chat", authenticate, aiLimit, async (req, res, next) => {
     // Topic context if provided
     let topicCtx = "";
     if (topicId) {
-      const topic = await db.one(
+      const topic = await db.oneOrNone(
         "SELECT t.name, s.name AS subject FROM topics t JOIN subjects s ON s.id=t.subject_id WHERE t.id=$1",
         [topicId]
       ).catch(() => null);
@@ -123,7 +131,7 @@ IMPORTANT RULES:
 - Keep responses concise and well-structured${lessonContext}`;
 
     const reply = await callClaude(system, [
-      ...history.reverse().map(m => ({ role: m.role, content: m.content })),
+      ...(history || []).reverse().map(m => ({ role: m.role, content: m.content })),
       { role: "user", content: message },
     ]);
 
@@ -138,7 +146,7 @@ IMPORTANT RULES:
 // GET /api/ai/sessions
 router.get("/sessions", authenticate, async (req, res, next) => {
   try {
-    const sessions = await db.many(
+    const sessions = await db.manyOrNone(
       `SELECT cs.*, t.name AS topic_name, COUNT(cm.id)::int AS message_count
        FROM chat_sessions cs
        LEFT JOIN topics t ON t.id=cs.topic_id
@@ -154,9 +162,9 @@ router.get("/sessions", authenticate, async (req, res, next) => {
 // GET /api/ai/sessions/:id/messages
 router.get("/sessions/:id/messages", authenticate, async (req, res, next) => {
   try {
-    const session = await db.one("SELECT id FROM chat_sessions WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    const session = await db.oneOrNone("SELECT id FROM chat_sessions WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
     if (!session) return res.status(404).json({ error: "Session not found" });
-    const messages = await db.many(
+    const messages = await db.manyOrNone(
       "SELECT * FROM chat_messages WHERE session_id=$1 ORDER BY created_at",
       [req.params.id]
     );
@@ -168,7 +176,7 @@ router.get("/sessions/:id/messages", authenticate, async (req, res, next) => {
 router.post("/mark", authenticate, aiLimit, async (req, res, next) => {
   try {
     const { questionId, attemptId, answerText } = req.body;
-    const question = await db.one("SELECT * FROM exam_questions WHERE id=$1", [questionId]);
+    const question = await db.oneOrNone("SELECT * FROM exam_questions WHERE id=$1", [questionId]);
     if (!question) return res.status(404).json({ error: "Question not found" });
 
     const prompt = `You are a strict UK examiner marking a student answer.
@@ -210,7 +218,7 @@ router.post("/blurt", authenticate, aiLimit, async (req, res, next) => {
     const { subtopicId, userText } = req.body;
     if (!subtopicId || !userText?.trim()) return res.status(400).json({ error: "subtopicId and userText required" });
 
-    const lessons = await db.many(
+    const lessons = await db.manyOrNone(
       "SELECT title, summary, content, keywords FROM lessons WHERE subtopic_id=$1 AND is_published=true",
       [subtopicId]
     );
@@ -258,16 +266,17 @@ router.post("/feynman", authenticate, aiLimit, async (req, res, next) => {
     const { subtopicId, explanation } = req.body;
     if (!subtopicId || !explanation?.trim()) return res.status(400).json({ error: "subtopicId and explanation required" });
 
-    const sub = await db.one(
+    const sub = await db.oneOrNone(
       `SELECT st.name, t.name AS topic, s.name AS subject
        FROM subtopics st JOIN topics t ON t.id=st.topic_id JOIN subjects s ON s.id=t.subject_id
        WHERE st.id=$1`,
       [subtopicId]
     );
+    if (!sub) return res.status(404).json({ error: "Subtopic not found" });
 
     const prompt = `Evaluate this student's Feynman explanation of a concept.
 
-TOPIC: ${sub?.name || "Unknown"} (${sub?.subject || ""})
+TOPIC: ${sub.name} (${sub.subject})
 STUDENT EXPLANATION: ${explanation}
 
 Respond ONLY with valid JSON:
@@ -305,7 +314,7 @@ router.post("/generate-flashcards", authenticate, aiLimit, async (req, res, next
     const { lessonId, text, count = 10 } = req.body;
     let content = text;
     if (lessonId) {
-      const lesson = await db.one("SELECT content FROM lessons WHERE id=$1", [lessonId]);
+      const lesson = await db.oneOrNone("SELECT content FROM lessons WHERE id=$1", [lessonId]);
       if (!lesson) return res.status(404).json({ error: "Lesson not found" });
       content = lesson.content;
     }
@@ -332,7 +341,7 @@ Respond ONLY with a valid JSON array:
 router.get("/study-guidance", authenticate, async (req, res, next) => {
   try {
     const [weak, exams, due] = await Promise.all([
-      db.many(
+      db.manyOrNone(
         `SELECT ms.score, st.name, t.name AS topic
          FROM memory_strength ms
          JOIN subtopics st ON st.id=ms.subtopic_id
@@ -340,7 +349,7 @@ router.get("/study-guidance", authenticate, async (req, res, next) => {
          WHERE ms.user_id=$1 ORDER BY ms.score LIMIT 8`,
         [req.user.id]
       ),
-      db.many(
+      db.manyOrNone(
         `SELECT ea.total_score, pp.title FROM exam_attempts ea
          JOIN past_papers pp ON pp.id=ea.paper_id
          WHERE ea.user_id=$1 AND ea.submitted_at IS NOT NULL
@@ -355,8 +364,8 @@ router.get("/study-guidance", authenticate, async (req, res, next) => {
 
     const prompt = `You are an academic strategist for a UK A-Level student.
 
-Weak memory areas: ${JSON.stringify(weak.filter(w=>w.score<50))}
-Recent exam scores: ${JSON.stringify(exams)}
+Weak memory areas: ${JSON.stringify((weak || []).filter(w=>w.score<50))}
+Recent exam scores: ${JSON.stringify(exams || [])}
 Flashcards due today: ${due.count}
 
 Give a personalised study plan. Respond ONLY with valid JSON:
@@ -391,22 +400,23 @@ router.post("/mindmap-grade", authenticate, aiLimit, async (req, res, next) => {
     const { subtopicId, mindmap } = req.body;
     if (!subtopicId || !mindmap?.trim()) return res.status(400).json({ error: "subtopicId and mindmap required" });
 
-    const lessons = await db.many(
+    const lessons = await db.manyOrNone(
       "SELECT title, content FROM lessons WHERE subtopic_id=$1 AND is_published=true",
       [subtopicId]
     );
     if (!lessons.length) return res.status(404).json({ error: "No content for this subtopic" });
 
-    const sub = await db.one(
+    const sub = await db.oneOrNone(
       `SELECT st.name, t.name AS topic, s.name AS subject
        FROM subtopics st JOIN topics t ON t.id=st.topic_id JOIN subjects s ON s.id=t.subject_id
        WHERE st.id=$1`,
       [subtopicId]
-    ).catch(() => ({ name: "this topic" }));
+    );
 
     const coreContent = lessons.map(l => `${l.title}: ${l.content.slice(0, 400)}`).join("\n\n");
+    const topicName = sub?.name || "this topic";
 
-    const prompt = `Grade this student mind map on "${sub.name}".\n\nSTUDENT MINDMAP:\n${mindmap}\n\nREFERENCE:\n${coreContent}\n\nRespond ONLY with valid JSON: { "score": <0-100>, "feedback": "<2-3 sentences>", "missing": ["..."], "incorrect": ["..."], "strengths": ["..."] }`;
+    const prompt = `Grade this student mind map on "${topicName}".\n\nSTUDENT MINDMAP:\n${mindmap}\n\nREFERENCE:\n${coreContent}\n\nRespond ONLY with valid JSON: { "score": <0-100>, "feedback": "<2-3 sentences>", "missing": ["..."], "incorrect": ["..."], "strengths": ["..."] }`;
 
     const text = await callClaude("You are an expert A-Level examiner.", [{ role:"user", content: prompt }], 800);
     const result = parseJSON(text) || { score: 0, feedback: "Could not grade." };

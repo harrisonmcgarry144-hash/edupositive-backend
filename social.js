@@ -8,7 +8,7 @@ router.get("/users/search", authenticate, async (req, res, next) => {
   try {
     const { q } = req.query;
     if (!q?.trim()) return res.json([]);
-    const users = await db.many(
+    const users = await db.manyOrNone(
       `SELECT id, username, full_name, avatar_url, school, level, xp, streak, rank, is_top100
        FROM users WHERE LOWER(username) = LOWER($1) AND id != $2 LIMIT 5`,
       [q.trim(), req.user.id]
@@ -23,7 +23,7 @@ router.post("/friends/request", authenticate, async (req, res, next) => {
   try {
     const { receiverId } = req.body;
     if (receiverId === req.user.id) return res.status(400).json({ error: "Cannot friend yourself" });
-    const f = await db.one(
+    const f = await db.oneOrNone(
       `INSERT INTO friendships (requester, receiver) VALUES ($1,$2)
        ON CONFLICT (requester,receiver) DO NOTHING RETURNING *`,
       [req.user.id, receiverId]
@@ -38,17 +38,18 @@ router.post("/friends/request", authenticate, async (req, res, next) => {
 router.put("/friends/:id/respond", authenticate, async (req, res, next) => {
   try {
     const { status } = req.body;
-    const f = await db.one(
+    const f = await db.oneOrNone(
       "UPDATE friendships SET status=$1 WHERE id=$2 AND receiver=$3 RETURNING *",
       [status, req.params.id, req.user.id]
     );
-    res.json(f || { message: "Not found" });
+    if (!f) return res.status(404).json({ error: "Not found" });
+    res.json(f);
   } catch (err) { next(err); }
 });
 
 router.get("/friends", authenticate, async (req, res, next) => {
   try {
-    const friends = await db.many(
+    const friends = await db.manyOrNone(
       `SELECT u.id, u.username, u.full_name, u.avatar_url, u.xp, u.level, u.streak,
               u.rank, u.is_top100,
               f.id AS friendship_id, f.status, f.created_at
@@ -63,7 +64,7 @@ router.get("/friends", authenticate, async (req, res, next) => {
 
 router.get("/friends/pending", authenticate, async (req, res, next) => {
   try {
-    const pending = await db.many(
+    const pending = await db.manyOrNone(
       `SELECT u.id, u.username, u.avatar_url, u.rank, u.is_top100,
               f.id AS friendship_id, f.created_at
        FROM friendships f JOIN users u ON u.id=f.requester
@@ -78,7 +79,7 @@ router.get("/friends/pending", authenticate, async (req, res, next) => {
 
 router.get("/messages", authenticate, async (req, res, next) => {
   try {
-    const convos = await db.many(
+    const convos = await db.manyOrNone(
       `SELECT DISTINCT ON (partner_id)
          partner_id, partner_name, partner_avatar, partner_rank, partner_top100,
          content AS last_message, created_at, read
@@ -104,7 +105,7 @@ router.get("/messages", authenticate, async (req, res, next) => {
 
 router.get("/messages/:userId", authenticate, async (req, res, next) => {
   try {
-    const msgs = await db.many(
+    const msgs = await db.manyOrNone(
       `SELECT * FROM direct_messages
        WHERE (sender_id=$1 AND receiver_id=$2) OR (sender_id=$2 AND receiver_id=$1)
        ORDER BY created_at ASC LIMIT 100`,
@@ -126,7 +127,7 @@ router.post("/messages", authenticate, async (req, res, next) => {
       "INSERT INTO direct_messages (sender_id, receiver_id, content) VALUES ($1,$2,$3) RETURNING *",
       [req.user.id, receiverId, content]
     );
-    req.app.get("io").to(`user:${receiverId}`).emit("new_message", { ...msg });
+    req.app.get("io")?.to(`user:${receiverId}`).emit("new_message", { ...msg });
     res.status(201).json(msg);
   } catch (err) { next(err); }
 });
@@ -135,7 +136,7 @@ router.post("/messages", authenticate, async (req, res, next) => {
 
 router.get("/groups", authenticate, async (req, res, next) => {
   try {
-    const groups = await db.many(
+    const groups = await db.manyOrNone(
       `SELECT sg.*, COUNT(gm.user_id)::int AS member_count,
               CASE WHEN gm2.user_id IS NOT NULL THEN true ELSE false END AS is_member
        FROM study_groups sg
@@ -153,16 +154,16 @@ router.post("/groups", authenticate, async (req, res, next) => {
   try {
     const { name, description, isPublic, school } = req.body;
     if (!name) return res.status(400).json({ error: "name required" });
-    const group = await db.transaction(async (client) => {
-      const g = await client.query(
+    const group = await db.tx(async (t) => {
+      const g = await t.one(
         `INSERT INTO study_groups (name, description, is_public, school, creator_id) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [name, description || null, isPublic ?? true, school || null, req.user.id]
       );
-      await client.query(
+      await t.query(
         "INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,'owner')",
-        [g.rows[0].id, req.user.id]
+        [g.id, req.user.id]
       );
-      return g.rows[0];
+      return g;
     });
     res.status(201).json(group);
   } catch (err) { next(err); }
@@ -201,13 +202,13 @@ router.get("/forum", authenticate, async (req, res, next) => {
     const p = [];
     if (topicId) q += ` AND fp.topic_id=$${p.push(topicId)}`;
     q += " GROUP BY fp.id, u.username, u.avatar_url, u.rank, u.is_top100 ORDER BY fp.created_at DESC LIMIT 50";
-    res.json(await db.many(q, p));
+    res.json(await db.manyOrNone(q, p));
   } catch (err) { next(err); }
 });
 
 router.get("/forum/:id/replies", authenticate, async (req, res, next) => {
   try {
-    const replies = await db.many(
+    const replies = await db.manyOrNone(
       `SELECT fp.*, u.username, u.avatar_url, u.rank, u.is_top100 FROM forum_posts fp
        JOIN users u ON u.id=fp.user_id
        WHERE fp.parent_id=$1 AND fp.is_flagged=false ORDER BY fp.created_at`,
@@ -232,11 +233,14 @@ router.post("/forum", authenticate, async (req, res, next) => {
 
 router.post("/forum/:id/upvote", authenticate, async (req, res, next) => {
   try {
+    // Only increment counter if this user hasn't already upvoted (INSERT was not a no-op)
     await db.query(
-      "INSERT INTO forum_upvotes (post_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+      `WITH ins AS (
+         INSERT INTO forum_upvotes (post_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING 1
+       )
+       UPDATE forum_posts SET upvotes=upvotes+1 WHERE id=$1 AND EXISTS (SELECT 1 FROM ins)`,
       [req.params.id, req.user.id]
     );
-    await db.query("UPDATE forum_posts SET upvotes=upvotes+1 WHERE id=$1", [req.params.id]);
     res.json({ message: "Upvoted" });
   } catch (err) { next(err); }
 });

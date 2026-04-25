@@ -6,7 +6,7 @@ const { generateStudySchedule } = require('./scheduler');
 
 // GET /api/exams/boards
 router.get("/boards", async (_req, res, next) => {
-  try { res.json(await db.many("SELECT * FROM exam_boards ORDER BY name")); }
+  try { res.json(await db.manyOrNone("SELECT * FROM exam_boards ORDER BY name")); }
   catch (err) { next(err); }
 });
 
@@ -27,14 +27,14 @@ router.get("/papers", authenticate, async (req, res, next) => {
     if (year)      q += ` AND pp.year=$${p.push(year)}`;
     if (boardId)   q += ` AND pp.exam_board_id=$${p.push(boardId)}`;
     q += " GROUP BY pp.id, s.name, eb.name ORDER BY pp.year DESC, pp.paper_number";
-    res.json(await db.many(q, p));
+    res.json(await db.manyOrNone(q, p));
   } catch (err) { next(err); }
 });
 
 // GET /api/exams/papers/:id
 router.get("/papers/:id", authenticate, async (req, res, next) => {
   try {
-    const paper = await db.one(
+    const paper = await db.oneOrNone(
       `SELECT pp.*, s.name AS subject_name, eb.name AS board_name
        FROM past_papers pp
        LEFT JOIN subjects s ON s.id=pp.subject_id
@@ -43,7 +43,7 @@ router.get("/papers/:id", authenticate, async (req, res, next) => {
       [req.params.id]
     );
     if (!paper) return res.status(404).json({ error: "Paper not found" });
-    const boundaries = await db.many("SELECT * FROM grade_boundaries WHERE paper_id=$1 ORDER BY min_marks DESC", [req.params.id]);
+    const boundaries = await db.manyOrNone("SELECT * FROM grade_boundaries WHERE paper_id=$1 ORDER BY min_marks DESC", [req.params.id]);
     res.json({ ...paper, gradeBoundaries: boundaries });
   } catch (err) { next(err); }
 });
@@ -51,7 +51,7 @@ router.get("/papers/:id", authenticate, async (req, res, next) => {
 // GET /api/exams/papers/:id/questions
 router.get("/papers/:id/questions", authenticate, async (req, res, next) => {
   try {
-    const questions = await db.many(
+    const questions = await db.manyOrNone(
       `SELECT eq.id, eq.question_number, eq.question_text, eq.marks, eq.difficulty,
               eq.topic_id, t.name AS topic_name
        FROM exam_questions eq
@@ -109,7 +109,7 @@ router.post("/attempts/:id/submit", authenticate, async (req, res, next) => {
 // GET /api/exams/attempts — user's attempt history
 router.get("/attempts", authenticate, async (req, res, next) => {
   try {
-    const attempts = await db.many(
+    const attempts = await db.manyOrNone(
       `SELECT ea.*, pp.title AS paper_title, pp.year
        FROM exam_attempts ea
        LEFT JOIN past_papers pp ON pp.id=ea.paper_id
@@ -128,7 +128,7 @@ router.get("/attempts/:id", authenticate, async (req, res, next) => {
       [req.params.id, req.user.id]
     );
     if (!attempt) return res.status(404).json({ error: "Attempt not found" });
-    const answers = await db.many(
+    const answers = await db.manyOrNone(
       `SELECT ea.*, eq.question_text, eq.marks, eq.question_number
        FROM exam_answers ea
        JOIN exam_questions eq ON eq.id=ea.question_id
@@ -142,7 +142,7 @@ router.get("/attempts/:id", authenticate, async (req, res, next) => {
 // GET /api/exams/schedule — user's registered exam dates
 router.get("/schedule", authenticate, async (req, res, next) => {
   try {
-    const exams = await db.many(
+    const exams = await db.manyOrNone(
       `SELECT ue.*, s.name AS subject_name
        FROM user_exams ue
        LEFT JOIN subjects s ON s.id=ue.subject_id
