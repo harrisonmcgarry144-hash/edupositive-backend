@@ -31,16 +31,12 @@ router.get("/decks", authenticate, async (req, res, next) => {
       `SELECT fd.*,
         COUNT(f.id)::int AS total_cards,
         COUNT(fp.flashcard_id) FILTER (WHERE fp.interval_days >= 28)::int AS mastered,
-        COUNT(fp.flashcard_id) FILTER (WHERE fp.next_review <= CURRENT_DATE AND fp.interval_days < 28)::int AS due_today,
-        st.name AS subtopic_name, t.name AS topic_name, s.name AS subject_name
+        COUNT(fp.flashcard_id) FILTER (WHERE fp.next_review <= CURRENT_DATE AND fp.interval_days < 28)::int AS due_today
        FROM flashcard_decks fd
        LEFT JOIN flashcards f ON f.deck_id = fd.id
        LEFT JOIN flashcard_progress fp ON fp.flashcard_id = f.id AND fp.user_id = fd.user_id
-       LEFT JOIN subtopics st ON st.id = fd.subtopic_id
-       LEFT JOIN topics t ON t.id = st.topic_id
-       LEFT JOIN subjects s ON s.id = t.subject_id
        WHERE fd.user_id = $1
-       GROUP BY fd.id, st.name, t.name, s.name
+       GROUP BY fd.id
        ORDER BY fd.created_at DESC`,
       [req.user.id]
     );
@@ -51,13 +47,14 @@ router.get("/decks", authenticate, async (req, res, next) => {
 // POST /api/flashcards/decks — create new deck
 router.post("/decks", authenticate, async (req, res, next) => {
   try {
-    const { name, description } = req.body;
-    if (!name?.trim()) return res.status(400).json({ error: "Name required" });
+    const { name, title: titleParam, description } = req.body;
+    const deckTitle = titleParam || name;
+    if (!deckTitle?.trim()) return res.status(400).json({ error: "Name required" });
 
     const isPrem = await hasPremium(req.user.id);
     if (!isPrem) {
       const count = await db.one(
-        "SELECT COUNT(*)::int AS count FROM flashcard_decks WHERE user_id=$1 AND is_auto_generated=false",
+        "SELECT COUNT(*)::int AS count FROM flashcard_decks WHERE user_id=$1",
         [req.user.id]
       );
       if (count.count >= 3) {
@@ -66,8 +63,8 @@ router.post("/decks", authenticate, async (req, res, next) => {
     }
 
     const deck = await db.one(
-      "INSERT INTO flashcard_decks (user_id, name, description) VALUES ($1,$2,$3) RETURNING *",
-      [req.user.id, name.trim(), description || null]
+      "INSERT INTO flashcard_decks (user_id, title) VALUES ($1,$2) RETURNING *",
+      [req.user.id, deckTitle.trim()]
     );
     res.status(201).json(deck);
   } catch (err) { next(err); }
@@ -86,7 +83,8 @@ router.get("/decks/:id/cards", authenticate, async (req, res, next) => {
   try {
     const cards = await db.many(
       `SELECT f.*,
-        fp.interval_days, fp.next_review, fp.repetitions, fp.last_reviewed,
+        fp.interval_days, fp.next_review, fp.repetitions, fp.ease_factor,
+        fp.correct_count, fp.incorrect_count,
         (fp.interval_days >= 28) AS is_mastered
        FROM flashcards f
        LEFT JOIN flashcard_progress fp ON fp.flashcard_id = f.id AND fp.user_id = $2
@@ -101,12 +99,14 @@ router.get("/decks/:id/cards", authenticate, async (req, res, next) => {
 // POST /api/flashcards/decks/:id/cards — add card to deck
 router.post("/decks/:id/cards", authenticate, async (req, res, next) => {
   try {
-    const { front, back } = req.body;
-    if (!front?.trim() || !back?.trim()) return res.status(400).json({ error: "Front and back required" });
+    const { front, back, question: q, answer: a } = req.body;
+    const question = q || front;
+    const answer = a || back;
+    if (!question?.trim() || !answer?.trim()) return res.status(400).json({ error: "Question and answer required" });
 
     const card = await db.one(
-      "INSERT INTO flashcards (deck_id, user_id, front, back) VALUES ($1,$2,$3,$4) RETURNING *",
-      [req.params.id, req.user.id, front.trim(), back.trim()]
+      "INSERT INTO flashcards (deck_id, question, answer) VALUES ($1,$2,$3) RETURNING *",
+      [req.params.id, question.trim(), answer.trim()]
     );
 
     await db.query(
@@ -121,7 +121,10 @@ router.post("/decks/:id/cards", authenticate, async (req, res, next) => {
 // DELETE /api/flashcards/cards/:id
 router.delete("/cards/:id", authenticate, async (req, res, next) => {
   try {
-    await db.query("DELETE FROM flashcards WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    await db.query(
+      "DELETE FROM flashcards WHERE id=$1 AND deck_id IN (SELECT id FROM flashcard_decks WHERE user_id=$2)",
+      [req.params.id, req.user.id]
+    );
     res.json({ message: "Card deleted" });
   } catch (err) { next(err); }
 });
@@ -164,14 +167,13 @@ router.post("/rate", authenticate, async (req, res, next) => {
     const incorrectDelta = rating < 3 ? 1 : 0;
 
     await db.query(
-      `INSERT INTO flashcard_progress (user_id, flashcard_id, interval_days, next_review, repetitions, correct_count, incorrect_count, last_reviewed)
-       VALUES ($1,$2,$3,$4,1,$5,$6,NOW())
+      `INSERT INTO flashcard_progress (user_id, flashcard_id, interval_days, next_review, repetitions, correct_count, incorrect_count)
+       VALUES ($1,$2,$3,$4,1,$5,$6)
        ON CONFLICT (user_id, flashcard_id) DO UPDATE SET
          interval_days=$3, next_review=$4,
          repetitions=flashcard_progress.repetitions+1,
          correct_count=flashcard_progress.correct_count+$5,
-         incorrect_count=flashcard_progress.incorrect_count+$6,
-         last_reviewed=NOW()`,
+         incorrect_count=flashcard_progress.incorrect_count+$6`,
       [req.user.id, cardId, newInterval, nextReview, correctDelta, incorrectDelta]
     );
 
@@ -196,27 +198,34 @@ router.post("/generate/:subtopicId", authenticate, async (req, res, next) => {
   try {
     const { subtopicId } = req.params;
 
+    // Get subject/topic info for this subtopic
+    const subtopicInfo = await db.one(
+      `SELECT st.name AS subtopic, t.name AS topic, t.id AS topic_id, s.name AS subject, s.id AS subject_id
+       FROM subtopics st
+       JOIN topics t ON t.id = st.topic_id
+       JOIN subjects s ON s.id = t.subject_id
+       WHERE st.id = $1`,
+      [subtopicId]
+    );
+    if (!subtopicInfo) return res.status(404).json({ error: "Subtopic not found" });
+
+    // Check if deck already exists for this topic/subject
     const existing = await db.one(
-      "SELECT COUNT(*)::int AS count FROM flashcard_decks WHERE user_id=$1 AND subtopic_id=$2 AND is_auto_generated=true",
-      [req.user.id, subtopicId]
+      "SELECT COUNT(*)::int AS count FROM flashcard_decks WHERE user_id=$1 AND subject_id=$2 AND topic_id=$3",
+      [req.user.id, subtopicInfo.subject_id, subtopicInfo.topic_id]
     );
     if (existing.count > 0) return res.json({ message: "Already generated" });
 
     const lessons = await db.many(
-      `SELECT l.title, l.content, st.name AS subtopic, t.name AS topic, s.name AS subject
-       FROM lessons l
-       JOIN subtopics st ON st.id = l.subtopic_id
-       JOIN topics t ON t.id = st.topic_id
-       JOIN subjects s ON s.id = t.subject_id
+      `SELECT l.title, l.content FROM lessons l
        WHERE l.subtopic_id=$1 AND l.is_published=true`,
       [subtopicId]
     );
     if (!lessons.length) return res.status(404).json({ error: "No lessons found" });
 
-    const { subtopic, topic, subject } = lessons[0];
     const combinedContent = lessons.map(l => `${l.title}:\n${l.content}`).join('\n\n---\n\n');
 
-    const prompt = `Extract the most important facts from these A-Level ${subject} lessons on "${subtopic}" (${topic}).
+    const prompt = `Extract the most important facts from these A-Level ${subtopicInfo.subject} lessons on "${subtopicInfo.subtopic}" (${subtopicInfo.topic}).
 
 Create exactly 12-15 flashcards. Each card should test ONE specific fact.
 
@@ -225,7 +234,7 @@ ${combinedContent.slice(0, 4000)}
 
 Return ONLY a valid JSON array:
 [
-  { "front": "<specific question>", "back": "<concise factual answer>" }
+  { "question": "<specific question>", "answer": "<concise factual answer>" }
 ]
 
 Rules:
@@ -252,15 +261,15 @@ Rules:
     const cards = JSON.parse(match[0]);
 
     const deck = await db.one(
-      "INSERT INTO flashcard_decks (user_id, subtopic_id, name, is_auto_generated) VALUES ($1,$2,$3,true) RETURNING *",
-      [req.user.id, subtopicId, `${subtopic} — ${subject}`]
+      "INSERT INTO flashcard_decks (user_id, title, subject_id, topic_id) VALUES ($1,$2,$3,$4) RETURNING *",
+      [req.user.id, `${subtopicInfo.subtopic} — ${subtopicInfo.subject}`, subtopicInfo.subject_id, subtopicInfo.topic_id]
     );
 
     for (const card of cards) {
-      if (!card.front || !card.back) continue;
+      if (!card.question || !card.answer) continue;
       const fc = await db.one(
-        "INSERT INTO flashcards (deck_id, user_id, front, back) VALUES ($1,$2,$3,$4) RETURNING id",
-        [deck.id, req.user.id, card.front, card.back]
+        "INSERT INTO flashcards (deck_id, question, answer) VALUES ($1,$2,$3) RETURNING id",
+        [deck.id, card.question, card.answer]
       );
       await db.query(
         "INSERT INTO flashcard_progress (user_id, flashcard_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
