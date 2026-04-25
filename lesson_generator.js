@@ -12,22 +12,38 @@ CRITICAL WRITING RULES:
 - Write in flowing prose paragraphs, never lists
 - Each paragraph should be 2-4 sentences maximum. Keep it digestible.`;
 
-// Retry with aggressive backoff only on actual 429s
-async function callAIWithRetry(system, prompt, maxTokens, retries = 5) {
-  let delay = 10000;
+// Proactive rate limiter: stay under Gemini free tier (15 RPM)
+const RPM_LIMIT = 12;
+let _requestTimestamps = [];
+async function waitForRateLimit() {
+  const now = Date.now();
+  _requestTimestamps = _requestTimestamps.filter(t => now - t < 60000);
+  if (_requestTimestamps.length >= RPM_LIMIT) {
+    const wait = 60000 - (now - _requestTimestamps[0]) + 500;
+    console.log(`[LessonGen] Pacing — waiting ${Math.round(wait / 1000)}s to stay under ${RPM_LIMIT} RPM`);
+    await new Promise(r => setTimeout(r, wait));
+    return waitForRateLimit();
+  }
+  _requestTimestamps.push(Date.now());
+}
+
+async function callAIWithRetry(system, prompt, maxTokens, retries = 10) {
+  await waitForRateLimit();
+  let delay = 30000;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await callAI(system, prompt, maxTokens);
     } catch (e) {
       const is429 = e.message?.includes('429') || e.status === 429;
       if (is429) {
-        console.log(`[LessonGen] Rate limited. Waiting ${delay/1000}s...`);
+        console.log(`[LessonGen] 429 received. Waiting ${delay / 1000}s (attempt ${attempt + 1}/${retries})...`);
         await new Promise(r => setTimeout(r, delay));
-        delay = Math.min(delay * 2, 60000);
+        delay = Math.min(delay * 2, 120000);
+        await waitForRateLimit();
       } else if (attempt === retries - 1) {
         throw e;
       } else {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 3000));
       }
     }
   }
@@ -96,7 +112,7 @@ async function generateLessonsForSubtopic(subtopicId, examBoard) {
         console.error(`[LessonGen] Failed lesson "${titles[i]}":`, err.message);
         results.push(null);
       }
-      if (i < titles.length - 1) await new Promise(r => setTimeout(r, 1500));
+      // pacing handled by waitForRateLimit inside callAIWithRetry
     }
 
     // Insert all lessons
